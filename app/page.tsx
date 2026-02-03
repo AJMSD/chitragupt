@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useId } from "react";
 import type { DiskInfo, DisksResponse, MetricsResponse } from "@/lib/types";
 
 const POLL_INTERVAL_MS = 5000;
@@ -69,9 +69,31 @@ function UsageRing({ percent }: UsageRingProps) {
   const radius = 32;
   const circumference = 2 * Math.PI * radius;
   const offset = circumference - (clamped / 100) * circumference;
+  const filterId = useId();
 
   return (
-    <svg className="h-20 w-20" viewBox="0 0 64 64" role="img" aria-label={`Used ${clamped.toFixed(0)} percent`}>
+    <svg
+      className="h-20 w-20 overflow-visible"
+      viewBox="0 0 64 64"
+      role="img"
+      aria-label={`Used ${clamped.toFixed(0)} percent`}
+    >
+      <defs>
+        <filter
+          id={filterId}
+          x="-50%"
+          y="-50%"
+          width="200%"
+          height="200%"
+          filterUnits="userSpaceOnUse"
+        >
+          <feGaussianBlur stdDeviation="4" result="blur" />
+          <feMerge>
+            <feMergeNode in="blur" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
+      </defs>
       <circle
         cx="32"
         cy="32"
@@ -84,6 +106,19 @@ function UsageRing({ percent }: UsageRingProps) {
         cx="32"
         cy="32"
         r={radius}
+        stroke="rgba(251,191,36,0.6)"
+        strokeWidth="10"
+        fill="none"
+        strokeDasharray={circumference}
+        strokeDashoffset={offset}
+        strokeLinecap="round"
+        transform="rotate(-90 32 32)"
+        filter={`url(#${filterId})`}
+      />
+      <circle
+        cx="32"
+        cy="32"
+        r={radius}
         stroke="rgba(251,191,36,0.95)"
         strokeWidth="6"
         fill="none"
@@ -91,7 +126,6 @@ function UsageRing({ percent }: UsageRingProps) {
         strokeDashoffset={offset}
         strokeLinecap="round"
         transform="rotate(-90 32 32)"
-        className="drop-shadow-[0_0_8px_rgba(251,191,36,0.9)]"
       />
       <text
         x="32"

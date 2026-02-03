@@ -11,6 +11,7 @@ const execFileAsync = promisify(execFile);
 const HOST = "127.0.0.1";
 const PORT = Number.parseInt(process.env.AGENT_PORT ?? "7777", 10);
 const VERSION = "0.1.0";
+const DEBUG_DISKS = process.env.AGENT_DEBUG_DISKS === "1";
 
 if (process.env.AGENT_HOST && process.env.AGENT_HOST !== HOST) {
   console.warn("AGENT_HOST override ignored. Agent is bound to 127.0.0.1 only.");
@@ -106,14 +107,38 @@ async function getDisks(): Promise<DiskInfo[]> {
     try {
       const { stdout: nameRaw } = await execFileAsync("lsblk", [
         "-no",
+        "KNAME",
+        source,
+      ]);
+      const name = nameRaw.trim().split(/\s+/)[0];
+      if (name) return name;
+    } catch {}
+
+    try {
+      const { stdout: nameRaw } = await execFileAsync("lsblk", [
+        "-no",
         "NAME",
         source,
       ]);
-      const name = nameRaw.trim();
+      const name = nameRaw.trim().split(/\s+/)[0];
       if (name) return name;
     } catch {}
 
     return path.basename(source);
+  };
+
+  const getParentName = async (source: string): Promise<string | null> => {
+    try {
+      const { stdout: parentRaw } = await execFileAsync("lsblk", [
+        "-no",
+        "PKNAME",
+        source,
+      ]);
+      const parent = parentRaw.trim().split(/\s+/)[0];
+      return parent || null;
+    } catch {
+      return null;
+    }
   };
 
   const baseDeviceName = (name: string): string => {
@@ -159,22 +184,43 @@ async function getDisks(): Promise<DiskInfo[]> {
     }
 
     const kernelName = await getKernelName(source);
+    const parentName = await getParentName(source);
     const candidates = new Set([kernelName, baseDeviceName(kernelName)]);
+
+    if (parentName) {
+      candidates.add(parentName);
+      candidates.add(baseDeviceName(parentName));
+    }
 
     for (const candidate of candidates) {
       if (!candidate) continue;
       const rota = await readRotational(candidate);
       if (rota === 0) {
         sourceTypeCache.set(source, "ssd");
+        if (DEBUG_DISKS) {
+          console.log(
+            `[disks] ${source} kernel=${kernelName} parent=${parentName ?? "-"} -> ssd via ${candidate}`
+          );
+        }
         return "ssd";
       }
       if (rota === 1) {
         sourceTypeCache.set(source, "hdd");
+        if (DEBUG_DISKS) {
+          console.log(
+            `[disks] ${source} kernel=${kernelName} parent=${parentName ?? "-"} -> hdd via ${candidate}`
+          );
+        }
         return "hdd";
       }
     }
 
     sourceTypeCache.set(source, "unknown");
+    if (DEBUG_DISKS) {
+      console.log(
+        `[disks] ${source} kernel=${kernelName} parent=${parentName ?? "-"} -> unknown (candidates: ${[...candidates].join(", ")})`
+      );
+    }
     return "unknown";
   };
 

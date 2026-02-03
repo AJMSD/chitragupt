@@ -3,6 +3,7 @@
   hostname: string;
   uptimeSeconds: number;
   cpu: {
+    name: string;
     usagePercent: number;
     loadAverages: number[];
     cores: number;
@@ -16,6 +17,7 @@
   gpu: {
     name: string;
     utilizationPercent: number | null;
+    temperatureC: number | null;
     memoryTotalBytes: number | null;
     memoryUsedBytes: number | null;
     source: "nvidia-smi" | "lspci" | "unknown";

@@ -60,6 +60,15 @@ type StatCardProps = {
   detail?: string;
 };
 
+type ComputeCardProps = {
+  label: string;
+  name: string;
+  primaryLabel: string;
+  primaryValue: string;
+  secondaryLabel: string;
+  secondaryValue: string;
+};
+
 type UsageRingProps = {
   percent: number;
 };
@@ -151,6 +160,44 @@ function StatCard({ label, value, detail }: StatCardProps) {
       {detail ? (
         <div className="mt-2 text-sm text-slate-400">{detail}</div>
       ) : null}
+    </div>
+  );
+}
+
+function ComputeCard({
+  label,
+  name,
+  primaryLabel,
+  primaryValue,
+  secondaryLabel,
+  secondaryValue,
+}: ComputeCardProps) {
+  return (
+    <div className="rounded-3xl border border-amber-300/10 bg-slate-900/70 p-6 md:p-7">
+      <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
+        {label}
+      </div>
+      <div className="mt-3 truncate text-lg font-semibold text-slate-100">
+        {name}
+      </div>
+      <div className="mt-4 grid gap-3 text-sm text-slate-300 sm:grid-cols-2">
+        <div>
+          <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
+            {primaryLabel}
+          </div>
+          <div className="mt-1 text-xl font-semibold text-slate-100">
+            {primaryValue}
+          </div>
+        </div>
+        <div>
+          <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
+            {secondaryLabel}
+          </div>
+          <div className="mt-1 text-xl font-semibold text-slate-100">
+            {secondaryValue}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -296,27 +343,55 @@ export default function Home() {
           </div>
         ) : null}
 
-        <section className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          <StatCard
-            label="Hostname"
-            value={metrics?.hostname ?? (isLoading ? "Loading..." : "--")}
-          />
-          <StatCard
-            label="CPU Usage"
-            value={
+        <section className="grid gap-4 md:grid-cols-2 lg:grid-cols-2">
+          <ComputeCard
+            label="CPU"
+            name={metrics?.cpu?.name ?? (isLoading ? "Loading..." : "Unknown")}
+            primaryLabel="Usage"
+            primaryValue={
               metrics
                 ? `${metrics.cpu.usagePercent.toFixed(1)}%`
                 : isLoading
                 ? "Loading..."
                 : "--"
             }
-            detail={
+            secondaryLabel="Load"
+            secondaryValue={
               metrics
-                ? `Load ${metrics.cpu.loadAverages
+                ? metrics.cpu.loadAverages
                     .map((value) => value.toFixed(2))
-                    .join(" / ")}`
-                : undefined
+                    .join(" / ")
+                : isLoading
+                ? "Loading..."
+                : "--"
             }
+          />
+          <ComputeCard
+            label="GPU"
+            name={
+              metrics?.gpu?.name ?? (isLoading ? "Loading..." : "Not detected")
+            }
+            primaryLabel="Usage"
+            primaryValue={
+              metrics?.gpu?.utilizationPercent !== null &&
+              metrics?.gpu?.utilizationPercent !== undefined
+                ? `${metrics.gpu.utilizationPercent.toFixed(0)}%`
+                : "N/A"
+            }
+            secondaryLabel="Temp"
+            secondaryValue={
+              metrics?.gpu?.temperatureC !== null &&
+              metrics?.gpu?.temperatureC !== undefined
+                ? `${metrics.gpu.temperatureC.toFixed(0)}°C`
+                : "N/A"
+            }
+          />
+        </section>
+
+        <section className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+          <StatCard
+            label="Hostname"
+            value={metrics?.hostname ?? (isLoading ? "Loading..." : "--")}
           />
           <StatCard
             label="Memory"
@@ -343,30 +418,6 @@ export default function Home() {
                 : isLoading
                 ? "Loading..."
                 : "--"
-            }
-          />
-          <StatCard
-            label="GPU"
-            value={
-              metrics?.gpu?.utilizationPercent !== null &&
-              metrics?.gpu?.utilizationPercent !== undefined
-                ? `${metrics.gpu.utilizationPercent.toFixed(0)}%`
-                : metrics?.gpu?.name ?? (isLoading ? "Loading..." : "Not detected")
-            }
-            detail={
-              metrics?.gpu?.utilizationPercent !== null &&
-              metrics?.gpu?.utilizationPercent !== undefined
-                ? `${metrics.gpu.name}${
-                    metrics.gpu.memoryUsedBytes !== null &&
-                    metrics.gpu.memoryTotalBytes !== null
-                      ? ` · ${formatBytes(metrics.gpu.memoryUsedBytes)} / ${formatBytes(
-                          metrics.gpu.memoryTotalBytes
-                        )}`
-                      : ""
-                  }`
-                : metrics?.gpu?.source === "lspci"
-                ? "Utilization unavailable"
-                : undefined
             }
           />
           <StatCard

@@ -37,6 +37,7 @@ type DiskInfo = {
 type GpuInfo = {
   name: string;
   utilizationPercent: number | null;
+  temperatureC: number | null;
   memoryTotalBytes: number | null;
   memoryUsedBytes: number | null;
   source: "nvidia-smi" | "lspci" | "unknown";
@@ -101,6 +102,7 @@ async function getGpuInfo(): Promise<GpuInfo> {
   const unknown: GpuInfo = {
     name: "Not detected",
     utilizationPercent: null,
+    temperatureC: null,
     memoryTotalBytes: null,
     memoryUsedBytes: null,
     source: "unknown",
@@ -110,7 +112,7 @@ async function getGpuInfo(): Promise<GpuInfo> {
     const { stdout } = await execFileAsync(
       "nvidia-smi",
       [
-        "--query-gpu=name,utilization.gpu,memory.total,memory.used",
+        "--query-gpu=name,utilization.gpu,temperature.gpu,memory.total,memory.used",
         "--format=csv,noheader,nounits",
       ],
       { timeout: 2000 }
@@ -118,16 +120,18 @@ async function getGpuInfo(): Promise<GpuInfo> {
 
     const rows = stdout.trim().split(/\r?\n/).filter(Boolean);
     if (rows.length > 0) {
-      const [nameRaw, utilRaw, memTotalRaw, memUsedRaw] = rows[0]
+      const [nameRaw, utilRaw, tempRaw, memTotalRaw, memUsedRaw] = rows[0]
         .split(",")
         .map((value) => value.trim());
       const gpuCount = rows.length;
       const name =
         gpuCount > 1 ? `${nameRaw} (+${gpuCount - 1})` : nameRaw;
       const utilization = Number.parseFloat(utilRaw);
+      const temperature = Number.parseFloat(tempRaw);
       return {
         name: name || "NVIDIA GPU",
         utilizationPercent: Number.isFinite(utilization) ? utilization : null,
+        temperatureC: Number.isFinite(temperature) ? temperature : null,
         memoryTotalBytes: toMiBBytes(memTotalRaw),
         memoryUsedBytes: toMiBBytes(memUsedRaw),
         source: "nvidia-smi",
@@ -149,6 +153,7 @@ async function getGpuInfo(): Promise<GpuInfo> {
         return {
           name: `${match[1]} ${match[2]}`,
           utilizationPercent: null,
+          temperatureC: null,
           memoryTotalBytes: null,
           memoryUsedBytes: null,
           source: "lspci",
@@ -382,7 +387,8 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (url.pathname === "/metrics") {
-      const cpu = calculateCpuUsagePercent();
+      const cpuSnapshot = calculateCpuUsagePercent();
+      const cpuName = os.cpus()[0]?.model?.trim() || "Unknown CPU";
       const memoryTotal = os.totalmem();
       const memoryFree = os.freemem();
       const memoryUsed = Math.max(0, memoryTotal - memoryFree);
@@ -395,9 +401,10 @@ const server = http.createServer(async (req, res) => {
         hostname: os.hostname(),
         uptimeSeconds: Math.floor(os.uptime()),
         cpu: {
-          usagePercent: cpu.usagePercent,
+          name: cpuName,
+          usagePercent: cpuSnapshot.usagePercent,
           loadAverages: os.loadavg(),
-          cores: cpu.cores,
+          cores: cpuSnapshot.cores,
         },
         memory: {
           totalBytes: memoryTotal,

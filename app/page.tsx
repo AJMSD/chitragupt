@@ -106,15 +106,15 @@ function UsageRing({ percent }: UsageRingProps) {
 
 function StatCard({ label, value, detail }: StatCardProps) {
   return (
-    <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4 shadow-lg shadow-black/20">
+    <div className="rounded-3xl border border-amber-300/10 bg-slate-900/70 p-6 shadow-[0_0_35px_rgba(251,191,36,0.18)] md:p-7">
       <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
         {label}
       </div>
-      <div className="mt-2 text-2xl font-semibold text-slate-100">
+      <div className="mt-3 text-3xl font-semibold text-slate-100">
         {value}
       </div>
       {detail ? (
-        <div className="mt-1 text-sm text-slate-400">{detail}</div>
+        <div className="mt-2 text-sm text-slate-400">{detail}</div>
       ) : null}
     </div>
   );

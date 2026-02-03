@@ -2,6 +2,8 @@
 import http from "node:http";
 import os from "node:os";
 import { execFile } from "node:child_process";
+import { promises as fs } from "node:fs";
+import path from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -98,6 +100,51 @@ async function getDisks(): Promise<DiskInfo[]> {
 
   const disks: DiskInfo[] = [];
   const driveTypeCache = new Map<string, "ssd" | "hdd" | "unknown">();
+  const sourceTypeCache = new Map<string, "ssd" | "hdd" | "unknown">();
+
+  const getKernelName = async (source: string): Promise<string> => {
+    try {
+      const { stdout: nameRaw } = await execFileAsync("lsblk", [
+        "-no",
+        "NAME",
+        source,
+      ]);
+      const name = nameRaw.trim();
+      if (name) return name;
+    } catch {}
+
+    return path.basename(source);
+  };
+
+  const baseDeviceName = (name: string): string => {
+    if (name.startsWith("dm-")) return name;
+    if (name.startsWith("nvme") || name.startsWith("mmcblk")) {
+      return name.replace(/p\\d+$/, "");
+    }
+    return name.replace(/\\d+$/, "");
+  };
+
+  const readRotational = async (deviceName: string): Promise<number | null> => {
+    const cached = driveTypeCache.get(deviceName);
+    if (cached) {
+      return cached === "ssd" ? 0 : cached === "hdd" ? 1 : null;
+    }
+
+    try {
+      const rotaRaw = await fs.readFile(
+        `/sys/block/${deviceName}/queue/rotational`,
+        "utf8"
+      );
+      const rota = Number.parseInt(rotaRaw.trim(), 10);
+      if (rota === 0 || rota === 1) {
+        driveTypeCache.set(deviceName, rota === 0 ? "ssd" : "hdd");
+        return rota;
+      }
+    } catch {}
+
+    driveTypeCache.set(deviceName, "unknown");
+    return null;
+  };
 
   const getDriveType = async (
     source: string
@@ -106,26 +153,29 @@ async function getDisks(): Promise<DiskInfo[]> {
       return "unknown";
     }
 
-    const cached = driveTypeCache.get(source);
+    const cached = sourceTypeCache.get(source);
     if (cached) {
       return cached;
     }
 
-    try {
-      const { stdout: rotaRaw } = await execFileAsync("lsblk", [
-        "-no",
-        "ROTA",
-        source,
-      ]);
-      const rota = Number.parseInt(rotaRaw.trim(), 10);
-      const driveType =
-        rota === 0 ? "ssd" : rota === 1 ? "hdd" : "unknown";
-      driveTypeCache.set(source, driveType);
-      return driveType;
-    } catch {
-      driveTypeCache.set(source, "unknown");
-      return "unknown";
+    const kernelName = await getKernelName(source);
+    const candidates = new Set([kernelName, baseDeviceName(kernelName)]);
+
+    for (const candidate of candidates) {
+      if (!candidate) continue;
+      const rota = await readRotational(candidate);
+      if (rota === 0) {
+        sourceTypeCache.set(source, "ssd");
+        return "ssd";
+      }
+      if (rota === 1) {
+        sourceTypeCache.set(source, "hdd");
+        return "hdd";
+      }
     }
+
+    sourceTypeCache.set(source, "unknown");
+    return "unknown";
   };
 
   for (const line of lines) {

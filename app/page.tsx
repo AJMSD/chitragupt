@@ -66,12 +66,12 @@ type UsageRingProps = {
 
 function UsageRing({ percent }: UsageRingProps) {
   const clamped = Number.isFinite(percent) ? Math.min(Math.max(percent, 0), 100) : 0;
-  const radius = 26;
+  const radius = 32;
   const circumference = 2 * Math.PI * radius;
   const offset = circumference - (clamped / 100) * circumference;
 
   return (
-    <svg className="h-16 w-16" viewBox="0 0 64 64" role="img" aria-label={`Used ${clamped.toFixed(0)} percent`}>
+    <svg className="h-20 w-20" viewBox="0 0 64 64" role="img" aria-label={`Used ${clamped.toFixed(0)} percent`}>
       <circle
         cx="32"
         cy="32"
@@ -84,13 +84,14 @@ function UsageRing({ percent }: UsageRingProps) {
         cx="32"
         cy="32"
         r={radius}
-        stroke="rgba(251,191,36,0.9)"
+        stroke="rgba(251,191,36,0.95)"
         strokeWidth="6"
         fill="none"
         strokeDasharray={circumference}
         strokeDashoffset={offset}
         strokeLinecap="round"
         transform="rotate(-90 32 32)"
+        className="drop-shadow-[0_0_8px_rgba(251,191,36,0.9)]"
       />
       <text
         x="32"
@@ -106,7 +107,7 @@ function UsageRing({ percent }: UsageRingProps) {
 
 function StatCard({ label, value, detail }: StatCardProps) {
   return (
-    <div className="rounded-3xl border border-amber-300/10 bg-slate-900/70 p-6 shadow-[0_0_35px_rgba(251,191,36,0.18)] md:p-7">
+    <div className="rounded-3xl border border-amber-300/10 bg-slate-900/70 p-6 md:p-7">
       <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
         {label}
       </div>

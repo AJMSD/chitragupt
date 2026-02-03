@@ -296,7 +296,7 @@ export default function Home() {
           </div>
         ) : null}
 
-        <section className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
+        <section className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           <StatCard
             label="Hostname"
             value={metrics?.hostname ?? (isLoading ? "Loading..." : "--")}
@@ -343,6 +343,30 @@ export default function Home() {
                 : isLoading
                 ? "Loading..."
                 : "--"
+            }
+          />
+          <StatCard
+            label="GPU"
+            value={
+              metrics?.gpu?.utilizationPercent !== null &&
+              metrics?.gpu?.utilizationPercent !== undefined
+                ? `${metrics.gpu.utilizationPercent.toFixed(0)}%`
+                : metrics?.gpu?.name ?? (isLoading ? "Loading..." : "Not detected")
+            }
+            detail={
+              metrics?.gpu?.utilizationPercent !== null &&
+              metrics?.gpu?.utilizationPercent !== undefined
+                ? `${metrics.gpu.name}${
+                    metrics.gpu.memoryUsedBytes !== null &&
+                    metrics.gpu.memoryTotalBytes !== null
+                      ? ` · ${formatBytes(metrics.gpu.memoryUsedBytes)} / ${formatBytes(
+                          metrics.gpu.memoryTotalBytes
+                        )}`
+                      : ""
+                  }`
+                : metrics?.gpu?.source === "lspci"
+                ? "Utilization unavailable"
+                : undefined
             }
           />
           <StatCard

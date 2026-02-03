@@ -34,6 +34,14 @@ type DiskInfo = {
   driveType: "ssd" | "hdd" | "unknown";
 };
 
+type GpuInfo = {
+  name: string;
+  utilizationPercent: number | null;
+  memoryTotalBytes: number | null;
+  memoryUsedBytes: number | null;
+  source: "nvidia-smi" | "lspci" | "unknown";
+};
+
 let lastCpuSnapshot: CpuSnapshot | null = null;
 
 function roundTo(value: number, decimals = 1): number {
@@ -82,6 +90,74 @@ function calculateCpuUsagePercent(): { usagePercent: number; cores: number } {
 function toBytes(value: string): number {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed * 1024 : 0;
+}
+
+function toMiBBytes(value: string): number | null {
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed * 1024 * 1024 : null;
+}
+
+async function getGpuInfo(): Promise<GpuInfo> {
+  const unknown: GpuInfo = {
+    name: "Not detected",
+    utilizationPercent: null,
+    memoryTotalBytes: null,
+    memoryUsedBytes: null,
+    source: "unknown",
+  };
+
+  try {
+    const { stdout } = await execFileAsync(
+      "nvidia-smi",
+      [
+        "--query-gpu=name,utilization.gpu,memory.total,memory.used",
+        "--format=csv,noheader,nounits",
+      ],
+      { timeout: 2000 }
+    );
+
+    const rows = stdout.trim().split(/\r?\n/).filter(Boolean);
+    if (rows.length > 0) {
+      const [nameRaw, utilRaw, memTotalRaw, memUsedRaw] = rows[0]
+        .split(",")
+        .map((value) => value.trim());
+      const gpuCount = rows.length;
+      const name =
+        gpuCount > 1 ? `${nameRaw} (+${gpuCount - 1})` : nameRaw;
+      const utilization = Number.parseFloat(utilRaw);
+      return {
+        name: name || "NVIDIA GPU",
+        utilizationPercent: Number.isFinite(utilization) ? utilization : null,
+        memoryTotalBytes: toMiBBytes(memTotalRaw),
+        memoryUsedBytes: toMiBBytes(memUsedRaw),
+        source: "nvidia-smi",
+      };
+    }
+  } catch {}
+
+  try {
+    const { stdout } = await execFileAsync("lspci", ["-mm"], { timeout: 2000 });
+    const lines = stdout.split(/\r?\n/);
+    const gpuLine = lines.find((line) =>
+      /(VGA compatible controller|3D controller|Display controller)/.test(line)
+    );
+    if (gpuLine) {
+      const match = gpuLine.match(
+        /\"(?:VGA compatible controller|3D controller|Display controller)\"\\s+\"([^\"]+)\"\\s+\"([^\"]+)\"/
+      );
+      if (match) {
+        return {
+          name: `${match[1]} ${match[2]}`,
+          utilizationPercent: null,
+          memoryTotalBytes: null,
+          memoryUsedBytes: null,
+          source: "lspci",
+        };
+      }
+    }
+  } catch {}
+
+  return unknown;
 }
 
 async function getDisks(): Promise<DiskInfo[]> {
@@ -312,6 +388,7 @@ const server = http.createServer(async (req, res) => {
       const memoryUsed = Math.max(0, memoryTotal - memoryFree);
       const memoryPercent =
         memoryTotal > 0 ? roundTo((memoryUsed / memoryTotal) * 100) : 0;
+      const gpu = await getGpuInfo();
 
       sendJson(res, 200, {
         timestamp: new Date().toISOString(),
@@ -328,6 +405,7 @@ const server = http.createServer(async (req, res) => {
           freeBytes: memoryFree,
           usedPercent: memoryPercent,
         },
+        gpu,
       });
       logRequest(method, url.pathname, 200, startTime);
       return;

@@ -13,6 +13,13 @@
     freeBytes: number;
     usedPercent: number;
   };
+  gpu: {
+    name: string;
+    utilizationPercent: number | null;
+    memoryTotalBytes: number | null;
+    memoryUsedBytes: number | null;
+    source: "nvidia-smi" | "lspci" | "unknown";
+  };
 };
 
 export type DiskInfo = {

@@ -10,11 +10,16 @@ const WARNING_THRESHOLDS = {
   disk: 85,
 };
 
-const ALLOWED_MOUNTS = new Map<string, string>([
-  ["/", "laptop"],
-  ["/mnt/Extreme500", "Extreme500"],
-  ["/mnt/PortableSSD", "PortableSSD"],
-]);
+const STORAGE_MOUNT_PREFIX = "/mnt/";
+
+function getDiskLabel(mount: string): string {
+  if (mount === "/") return "laptop";
+  if (mount.startsWith(STORAGE_MOUNT_PREFIX)) {
+    const label = mount.slice(STORAGE_MOUNT_PREFIX.length);
+    return label.length > 0 ? label : mount;
+  }
+  return mount;
+}
 
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes)) {
@@ -120,10 +125,24 @@ export default function Home() {
     };
   }, []);
 
-  const storageDisks = useMemo(
-    () => disks.filter((disk) => ALLOWED_MOUNTS.has(disk.mount)),
-    [disks]
-  );
+  const storageDisks = useMemo(() => {
+    const filtered = disks.filter(
+      (disk) => disk.mount === "/" || disk.mount.startsWith(STORAGE_MOUNT_PREFIX)
+    );
+
+    return [...filtered].sort((a, b) => {
+      const aIsRoot = a.mount === "/";
+      const bIsRoot = b.mount === "/";
+
+      if (aIsRoot && !bIsRoot) return -1;
+      if (!aIsRoot && bIsRoot) return 1;
+
+      const aUsed = Number.isFinite(a.usedPercent) ? a.usedPercent : 0;
+      const bUsed = Number.isFinite(b.usedPercent) ? b.usedPercent : 0;
+
+      return bUsed - aUsed;
+    });
+  }, [disks]);
 
   const storageSummary = useMemo(() => {
     if (storageDisks.length === 0) {
@@ -273,44 +292,40 @@ export default function Home() {
             </span>
           </div>
 
-          <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/60">
-            <div className="grid grid-cols-12 gap-2 border-b border-slate-800 px-4 py-3 text-xs uppercase tracking-[0.2em] text-slate-500">
-              <div className="col-span-4">Volume</div>
-              <div className="col-span-3">Filesystem</div>
-              <div className="col-span-2">Type</div>
-              <div className="col-span-3 text-right">Usage</div>
+          {storageDisks.length === 0 ? (
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/60 px-4 py-6 text-sm text-slate-400">
+              {isLoading ? "Loading disks..." : "No disks reported."}
             </div>
-            <div className="divide-y divide-slate-800">
-              {storageDisks.length === 0 ? (
-                <div className="px-4 py-6 text-sm text-slate-400">
-                  {isLoading ? "Loading disks..." : "No disks reported."}
-                </div>
-              ) : (
-                storageDisks.map((disk) => (
-                  <div
-                    key={`${disk.filesystem}-${disk.mount}`}
-                    className="grid grid-cols-12 gap-2 px-4 py-3 text-sm text-slate-200"
-                  >
-                    <div className="col-span-4 truncate">
-                      {ALLOWED_MOUNTS.get(disk.mount) ?? disk.mount}
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {storageDisks.map((disk) => (
+                <div
+                  key={`${disk.filesystem}-${disk.mount}`}
+                  className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4"
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <div className="truncate text-base font-semibold text-slate-100">
+                        {getDiskLabel(disk.mount)}
+                      </div>
+                      <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                        {disk.type}
+                      </div>
                     </div>
-                    <div className="col-span-3 truncate text-slate-400">
-                      {disk.filesystem}
-                    </div>
-                    <div className="col-span-2 text-slate-400">{disk.type}</div>
-                    <div className="col-span-3 text-right">
-                      <div className="font-medium">
+                    <div className="text-right">
+                      <div className="text-lg font-semibold text-slate-100">
                         {disk.usedPercent.toFixed(1)}%
                       </div>
                       <div className="text-xs text-slate-500">
-                        {formatBytes(disk.usedBytes)} / {formatBytes(disk.sizeBytes)}
+                        {formatBytes(disk.usedBytes)} /{" "}
+                        {formatBytes(disk.sizeBytes)}
                       </div>
                     </div>
                   </div>
-                ))
-              )}
+                </div>
+              ))}
             </div>
-          </div>
+          )}
         </section>
       </div>
     </div>

@@ -8,11 +8,9 @@ A self-hosted operations dashboard for Aman's Ubuntu server.
 
 ## Local Development
 1. Install dependencies: `npm install`
-2. Copy env template if needed: `copy .env.example .env.local`
-3. Build the agent: `npm run agent:build`
-4. Start the agent: `npm run agent:start`
-5. Start the web app: `npm run dev`
-6. Open `http://localhost:3000`
+2. Copy env template if needed: `copy .env.example .env`
+3. Start agent + web together: `npm run dev`
+4. Open `http://localhost:3000`
 
 ## Agent Endpoints
 - `GET /health`
@@ -22,4 +20,5 @@ A self-hosted operations dashboard for Aman's Ubuntu server.
 ## Notes
 - The public dashboard polls every 5 seconds.
 - The agent uses Node's built-in `http` server to avoid extra dependencies.
+- The agent and web both load environment variables from `.env`.
 - If the agent runs on a different port, set `AGENT_URL` accordingly.

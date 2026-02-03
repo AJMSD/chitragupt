@@ -1,4 +1,5 @@
-﻿import http from "node:http";
+﻿import "dotenv/config";
+import http from "node:http";
 import os from "node:os";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -215,3 +216,5 @@ server.headersTimeout = 6000;
 server.listen(PORT, HOST, () => {
   console.log(`Agent listening on http://${HOST}:${PORT}`);
 });
+
+

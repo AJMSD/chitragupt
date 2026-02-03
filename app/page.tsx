@@ -60,6 +60,50 @@ type StatCardProps = {
   detail?: string;
 };
 
+type UsageRingProps = {
+  percent: number;
+};
+
+function UsageRing({ percent }: UsageRingProps) {
+  const clamped = Number.isFinite(percent) ? Math.min(Math.max(percent, 0), 100) : 0;
+  const radius = 26;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference - (clamped / 100) * circumference;
+
+  return (
+    <svg className="h-16 w-16" viewBox="0 0 64 64" role="img" aria-label={`Used ${clamped.toFixed(0)} percent`}>
+      <circle
+        cx="32"
+        cy="32"
+        r={radius}
+        stroke="rgba(148,163,184,0.3)"
+        strokeWidth="6"
+        fill="none"
+      />
+      <circle
+        cx="32"
+        cy="32"
+        r={radius}
+        stroke="rgba(251,191,36,0.9)"
+        strokeWidth="6"
+        fill="none"
+        strokeDasharray={circumference}
+        strokeDashoffset={offset}
+        strokeLinecap="round"
+        transform="rotate(-90 32 32)"
+      />
+      <text
+        x="32"
+        y="36"
+        textAnchor="middle"
+        className="fill-slate-100 text-xs font-semibold"
+      >
+        {clamped.toFixed(0)}%
+      </text>
+    </svg>
+  );
+}
+
 function StatCard({ label, value, detail }: StatCardProps) {
   return (
     <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4 shadow-lg shadow-black/20">
@@ -302,6 +346,9 @@ export default function Home() {
                   key={`${disk.filesystem}-${disk.mount}`}
                   className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4"
                 >
+                  <div className="mb-4 flex justify-center">
+                    <UsageRing percent={disk.usedPercent} />
+                  </div>
                   <div className="flex items-start justify-between gap-4">
                     <div className="min-w-0">
                       <div className="truncate text-base font-semibold text-slate-100">

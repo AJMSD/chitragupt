@@ -10,31 +10,10 @@ const WARNING_THRESHOLDS = {
   disk: 85,
 };
 
-const EXCLUDED_FS_TYPES = new Set([
-  "tmpfs",
-  "devtmpfs",
-  "overlay",
-  "squashfs",
-  "proc",
-  "sysfs",
-  "cgroup",
-  "cgroup2",
-  "mqueue",
-  "debugfs",
-  "securityfs",
-  "pstore",
-  "autofs",
-  "tracefs",
-  "configfs",
-  "fusectl",
-  "binfmt_misc",
-  "rpc_pipefs",
-  "nsfs",
-  "ramfs",
-  "hugetlbfs",
-  "efivarfs",
-  "devpts",
-  "bpf",
+const ALLOWED_MOUNTS = new Map<string, string>([
+  ["/", "laptop"],
+  ["/mnt/Extreme500", "Extreme500"],
+  ["/mnt/PortableSSD", "PortableSSD"],
 ]);
 
 function formatBytes(bytes: number): string {
@@ -142,10 +121,7 @@ export default function Home() {
   }, []);
 
   const storageDisks = useMemo(
-    () =>
-      disks.filter(
-        (disk) => disk.sizeBytes > 0 && !EXCLUDED_FS_TYPES.has(disk.type)
-      ),
+    () => disks.filter((disk) => ALLOWED_MOUNTS.has(disk.mount)),
     [disks]
   );
 
@@ -299,23 +275,25 @@ export default function Home() {
 
           <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/60">
             <div className="grid grid-cols-12 gap-2 border-b border-slate-800 px-4 py-3 text-xs uppercase tracking-[0.2em] text-slate-500">
-              <div className="col-span-4">Mount</div>
+              <div className="col-span-4">Volume</div>
               <div className="col-span-3">Filesystem</div>
               <div className="col-span-2">Type</div>
               <div className="col-span-3 text-right">Usage</div>
             </div>
             <div className="divide-y divide-slate-800">
-              {disks.length === 0 ? (
+              {storageDisks.length === 0 ? (
                 <div className="px-4 py-6 text-sm text-slate-400">
                   {isLoading ? "Loading disks..." : "No disks reported."}
                 </div>
               ) : (
-                disks.map((disk) => (
+                storageDisks.map((disk) => (
                   <div
                     key={`${disk.filesystem}-${disk.mount}`}
                     className="grid grid-cols-12 gap-2 px-4 py-3 text-sm text-slate-200"
                   >
-                    <div className="col-span-4 truncate">{disk.mount}</div>
+                    <div className="col-span-4 truncate">
+                      {ALLOWED_MOUNTS.get(disk.mount) ?? disk.mount}
+                    </div>
                     <div className="col-span-3 truncate text-slate-400">
                       {disk.filesystem}
                     </div>

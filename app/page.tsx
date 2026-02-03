@@ -185,14 +185,13 @@ export default function Home() {
         <header className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
           <div className="space-y-3">
             <p className="text-xs uppercase tracking-[0.35em] text-slate-500">
-              ajmsd-ops public
+              ajmsd-ops
             </p>
             <h1 className="text-3xl font-semibold tracking-tight md:text-4xl">
-              Server Overview
+              Server Dashboard
             </h1>
             <p className="max-w-xl text-sm text-slate-400">
-              Public metrics refresh every 5 seconds. Hostname is visible, IP
-              stays private.
+              Public metrics refresh every 5 seconds.
             </p>
           </div>
           <div className="rounded-2xl border border-slate-800 bg-slate-900/70 px-5 py-4">
@@ -309,7 +308,9 @@ export default function Home() {
                         {getDiskLabel(disk.mount)}
                       </div>
                       <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
-                        {disk.type}
+                        {disk.driveType === "unknown"
+                          ? "Unknown"
+                          : disk.driveType.toUpperCase()}
                       </div>
                     </div>
                     <div className="text-right">

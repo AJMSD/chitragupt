@@ -23,6 +23,7 @@ export type DiskInfo = {
   availableBytes: number;
   usedPercent: number;
   mount: string;
+  driveType: "ssd" | "hdd" | "unknown";
 };
 
 export type DisksResponse = {

@@ -28,6 +28,7 @@ type DiskInfo = {
   availableBytes: number;
   usedPercent: number;
   mount: string;
+  driveType: "ssd" | "hdd" | "unknown";
 };
 
 let lastCpuSnapshot: CpuSnapshot | null = null;
@@ -96,6 +97,36 @@ async function getDisks(): Promise<DiskInfo[]> {
   lines.shift();
 
   const disks: DiskInfo[] = [];
+  const driveTypeCache = new Map<string, "ssd" | "hdd" | "unknown">();
+
+  const getDriveType = async (
+    source: string
+  ): Promise<"ssd" | "hdd" | "unknown"> => {
+    if (!source.startsWith("/dev/")) {
+      return "unknown";
+    }
+
+    const cached = driveTypeCache.get(source);
+    if (cached) {
+      return cached;
+    }
+
+    try {
+      const { stdout: rotaRaw } = await execFileAsync("lsblk", [
+        "-no",
+        "ROTA",
+        source,
+      ]);
+      const rota = Number.parseInt(rotaRaw.trim(), 10);
+      const driveType =
+        rota === 0 ? "ssd" : rota === 1 ? "hdd" : "unknown";
+      driveTypeCache.set(source, driveType);
+      return driveType;
+    } catch {
+      driveTypeCache.set(source, "unknown");
+      return "unknown";
+    }
+  };
 
   for (const line of lines) {
     if (!line.trim()) continue;
@@ -110,6 +141,7 @@ async function getDisks(): Promise<DiskInfo[]> {
     const mountRaw = mountParts.join(" ");
     const mount = mountRaw.replace(/\\040/g, " ");
     const usedPercent = Number.parseFloat(capacity.replace("%", ""));
+    const driveType = await getDriveType(filesystem);
 
     disks.push({
       filesystem,
@@ -119,6 +151,7 @@ async function getDisks(): Promise<DiskInfo[]> {
       availableBytes: toBytes(available),
       usedPercent: Number.isFinite(usedPercent) ? usedPercent : 0,
       mount,
+      driveType,
     });
   }
 

@@ -4,7 +4,7 @@ A self-hosted operations dashboard for Aman's Ubuntu server.
 ## Current MVP (Public)
 - Local ops agent (Node/TS) bound to 127.0.0.1
 - Public API proxy routes in Next.js (`/api/public/metrics`, `/api/public/disks`)
-- Public dashboard with CPU, memory, disks, uptime, and hostname
+- Public dashboard with CPU, memory, disks, uptime, hostname, and total storage
 
 ## Local Development
 1. Install dependencies: `npm install`

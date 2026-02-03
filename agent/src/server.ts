@@ -81,13 +81,25 @@ function toBytes(value: string): number {
 }
 
 async function getDisks(): Promise<DiskInfo[]> {
-  const { stdout } = await execFileAsync("df", ["-kPT"]);
+  let stdout = "";
+
+  try {
+    ({ stdout } = await execFileAsync("df", [
+      "-kP",
+      "--output=source,fstype,size,used,avail,pcent,target",
+    ]));
+  } catch {
+    ({ stdout } = await execFileAsync("df", ["-kPT"]));
+  }
+
   const lines = stdout.trim().split("\n");
   lines.shift();
 
   const disks: DiskInfo[] = [];
 
   for (const line of lines) {
+    if (!line.trim()) continue;
+
     const parts = line.trim().split(/\s+/);
     if (parts.length < 7) {
       continue;
@@ -95,7 +107,8 @@ async function getDisks(): Promise<DiskInfo[]> {
 
     const [filesystem, type, blocks, used, available, capacity, ...mountParts] =
       parts;
-    const mount = mountParts.join(" ");
+    const mountRaw = mountParts.join(" ");
+    const mount = mountRaw.replace(/\\040/g, " ");
     const usedPercent = Number.parseFloat(capacity.replace("%", ""));
 
     disks.push({

@@ -10,6 +10,33 @@ const WARNING_THRESHOLDS = {
   disk: 85,
 };
 
+const EXCLUDED_FS_TYPES = new Set([
+  "tmpfs",
+  "devtmpfs",
+  "overlay",
+  "squashfs",
+  "proc",
+  "sysfs",
+  "cgroup",
+  "cgroup2",
+  "mqueue",
+  "debugfs",
+  "securityfs",
+  "pstore",
+  "autofs",
+  "tracefs",
+  "configfs",
+  "fusectl",
+  "binfmt_misc",
+  "rpc_pipefs",
+  "nsfs",
+  "ramfs",
+  "hugetlbfs",
+  "efivarfs",
+  "devpts",
+  "bpf",
+]);
+
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes)) {
     return "--";
@@ -114,16 +141,43 @@ export default function Home() {
     };
   }, []);
 
+  const storageDisks = useMemo(
+    () =>
+      disks.filter(
+        (disk) => disk.sizeBytes > 0 && !EXCLUDED_FS_TYPES.has(disk.type)
+      ),
+    [disks]
+  );
+
+  const storageSummary = useMemo(() => {
+    if (storageDisks.length === 0) {
+      return null;
+    }
+
+    const totalBytes = storageDisks.reduce(
+      (sum, disk) => sum + disk.sizeBytes,
+      0
+    );
+    const usedBytes = storageDisks.reduce(
+      (sum, disk) => sum + disk.usedBytes,
+      0
+    );
+    const usedPercent =
+      totalBytes > 0 ? (usedBytes / totalBytes) * 100 : 0;
+
+    return { totalBytes, usedBytes, usedPercent };
+  }, [storageDisks]);
+
   const health = useMemo(() => {
     if (!metrics) return "Unknown";
     const cpuWarn = metrics.cpu.usagePercent >= WARNING_THRESHOLDS.cpu;
     const memoryWarn = metrics.memory.usedPercent >= WARNING_THRESHOLDS.memory;
-    const diskWarn = disks.some(
+    const diskWarn = storageDisks.some(
       (disk) => disk.usedPercent >= WARNING_THRESHOLDS.disk
     );
 
     return cpuWarn || memoryWarn || diskWarn ? "Warning" : "OK";
-  }, [metrics, disks]);
+  }, [metrics, storageDisks]);
 
   const lastUpdatedLabel = lastUpdated
     ? lastUpdated.toLocaleTimeString()
@@ -169,7 +223,7 @@ export default function Home() {
           </div>
         ) : null}
 
-        <section className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <section className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
           <StatCard
             label="Hostname"
             value={metrics?.hostname ?? (isLoading ? "Loading..." : "--")}
@@ -216,6 +270,21 @@ export default function Home() {
                 : isLoading
                 ? "Loading..."
                 : "--"
+            }
+          />
+          <StatCard
+            label="Total Storage"
+            value={
+              storageSummary
+                ? formatBytes(storageSummary.totalBytes)
+                : isLoading
+                ? "Loading..."
+                : "--"
+            }
+            detail={
+              storageSummary
+                ? `${formatBytes(storageSummary.usedBytes)} used (${storageSummary.usedPercent.toFixed(1)}%)`
+                : undefined
             }
           />
         </section>

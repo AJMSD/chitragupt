@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "agent:build": "tsc -p agent/tsconfig.json",
+    "agent:dev": "tsc -p agent/tsconfig.json --watch",
+    "agent:start": "node agent/dist/server.js"
   },
   "dependencies": {
     "next": "16.1.5",

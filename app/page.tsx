@@ -308,7 +308,7 @@ export default function Home() {
                         {getDiskLabel(disk.mount)}
                       </div>
                       <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
-                        {disk.driveType === "unknown"
+                        {(disk.driveType ?? "unknown") === "unknown"
                           ? "Unknown"
                           : disk.driveType.toUpperCase()}
                       </div>

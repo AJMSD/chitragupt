@@ -1,6 +1,6 @@
-"use client";
+﻿"use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { IconRefresh, IconTerminal } from "@/app/components/icons";
 import type {
   LogSourceInfo,
@@ -21,6 +21,7 @@ export default function LogsPage() {
   const [loadingSources, setLoadingSources] = useState(true);
   const [loadingTail, setLoadingTail] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const logRef = useRef<HTMLPreElement | null>(null);
 
   const loadSources = useCallback(async () => {
     setLoadingSources(true);
@@ -72,6 +73,11 @@ export default function LogsPage() {
     void loadTail(currentSource, lines);
   }, [currentSource, lines, loadTail]);
 
+  useEffect(() => {
+    if (!logRef.current) return;
+    logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [content]);
+
   const activeSource = useMemo(
     () => sources.find((source) => source.id === currentSource) ?? null,
     [sources, currentSource]
@@ -83,9 +89,9 @@ export default function LogsPage() {
     <section className="space-y-6">
       <div className="rounded-[28px] border border-orange-500/20 bg-[#120c08]/80 p-6">
         <h2 className="font-[var(--font-display)] text-2xl text-amber-100">
-          Logs Stream
+          Log Stream
         </h2>
-        <p className="mt-2 text-sm text-amber-100/70">
+        <p className="mt-2 text-xs text-amber-100/70">
           Tail logs for allowlisted services and containers.
         </p>
         <p className="mt-2 text-xs uppercase tracking-[0.3em] text-amber-200/60">
@@ -169,7 +175,10 @@ export default function LogsPage() {
             {loadingTail ? "Loading logs..." : "No log output returned for this source."}
           </div>
         ) : (
-          <pre className="mt-4 max-h-[480px] overflow-auto rounded-2xl border border-orange-500/20 bg-black/50 p-4 text-xs text-amber-100/90">
+          <pre
+            ref={logRef}
+            className="themed-scrollbar mt-4 max-h-[480px] overflow-y-auto rounded-2xl border border-orange-500/20 bg-black/50 p-4 text-xs text-amber-100/90 whitespace-pre-wrap break-words"
+          >
             {content}
           </pre>
         )}

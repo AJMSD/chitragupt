@@ -1,11 +1,17 @@
-"use client";
+﻿"use client";
 
-import { useEffect, useMemo, useState, useId } from "react";
+import { useCallback, useEffect, useMemo, useState, useId } from "react";
 import Link from "next/link";
-import { IconLock, IconShield } from "@/app/components/icons";
+import {
+  IconHeart,
+  IconLock,
+  IconRefresh,
+  IconShield,
+} from "@/app/components/icons";
 import type { DiskInfo, DisksResponse, MetricsResponse } from "@/lib/types";
 
 const POLL_INTERVAL_MS = 5000;
+const MAX_HISTORY = 10;
 const WARNING_THRESHOLDS = {
   cpu: 90,
   memory: 90,
@@ -56,122 +62,137 @@ function formatUptime(seconds: number): string {
   return parts.join(" ");
 }
 
-type RingGaugeProps = {
-  value: number | null | undefined;
-  label: string;
-  size?: number;
+function getStorageDisks(disks: DiskInfo[]): DiskInfo[] {
+  const filtered = disks.filter(
+    (disk) => disk.mount === "/" || disk.mount.startsWith(STORAGE_MOUNT_PREFIX)
+  );
+
+  return [...filtered].sort((a, b) => {
+    const aIsRoot = a.mount === "/";
+    const bIsRoot = b.mount === "/";
+
+    if (aIsRoot && !bIsRoot) return -1;
+    if (!aIsRoot && bIsRoot) return 1;
+
+    const aUsed = Number.isFinite(a.usedPercent) ? a.usedPercent : 0;
+    const bUsed = Number.isFinite(b.usedPercent) ? b.usedPercent : 0;
+
+    return bUsed - aUsed;
+  });
+}
+
+function getStorageSummary(disks: DiskInfo[]) {
+  if (disks.length === 0) return null;
+  const totalBytes = disks.reduce((sum, disk) => sum + disk.sizeBytes, 0);
+  const usedBytes = disks.reduce((sum, disk) => sum + disk.usedBytes, 0);
+  const usedPercent = totalBytes > 0 ? (usedBytes / totalBytes) * 100 : 0;
+  return { totalBytes, usedBytes, usedPercent };
+}
+
+type LineChartProps = {
+  data: number[];
+  height?: number;
+  stroke?: string;
+  fill?: string;
 };
 
-function RingGauge({ value, label, size = 120 }: RingGaugeProps) {
+function LineChart({
+  data,
+  height = 140,
+  stroke = "#fb923c",
+  fill = "rgba(251,146,60,0.18)",
+}: LineChartProps) {
   const id = useId();
-  const clamped = Number.isFinite(value)
-    ? Math.min(Math.max(value ?? 0, 0), 100)
-    : 0;
-  const isValid = Number.isFinite(value);
-  const radius = size / 2 - 12;
-  const circumference = 2 * Math.PI * radius;
-  const offset = circumference - (clamped / 100) * circumference;
-  const gradientId = `ring-${id}`;
-  const glowId = `glow-${id}`;
+  const width = 260;
+  const safeData = data.length >= 2 ? data : [0, 0];
+  const min = Math.min(...safeData);
+  const max = Math.max(...safeData);
+  const range = max - min || 1;
+  const padding = 12;
+  const points = safeData.map((value, index) => {
+    const x = padding + (index / (safeData.length - 1)) * (width - padding * 2);
+    const y = padding + (1 - (value - min) / range) * (height - padding * 2);
+    return { x, y };
+  });
+
+  const linePath = points
+    .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
+    .join(" ");
+
+  const areaPath = `${linePath} L ${points[points.length - 1].x} ${height - padding} L ${points[0].x} ${height - padding} Z`;
+  const gradientId = `line-${id}`;
 
   return (
     <svg
-      width={size}
-      height={size}
-      viewBox={`0 0 ${size} ${size}`}
+      width={width}
+      height={height}
+      viewBox={`0 0 ${width} ${height}`}
+      className="w-full"
       role="img"
-      aria-label={label}
-      className="drop-shadow-[0_0_18px_rgba(251,146,60,0.25)]"
+      aria-label="Line chart"
     >
       <defs>
-        <linearGradient id={gradientId} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor="#fdba74" />
-          <stop offset="100%" stopColor="#f97316" />
+        <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={stroke} stopOpacity="0.6" />
+          <stop offset="100%" stopColor={stroke} stopOpacity="0.05" />
         </linearGradient>
-        <filter id={glowId} x="-50%" y="-50%" width="200%" height="200%">
-          <feGaussianBlur stdDeviation="4" result="blur" />
-          <feMerge>
-            <feMergeNode in="blur" />
-            <feMergeNode in="SourceGraphic" />
-          </feMerge>
-        </filter>
       </defs>
+      <g>
+        {[0.25, 0.5, 0.75].map((fraction) => (
+          <line
+            key={fraction}
+            x1={padding}
+            x2={width - padding}
+            y1={padding + fraction * (height - padding * 2)}
+            y2={padding + fraction * (height - padding * 2)}
+            stroke="rgba(251,146,60,0.18)"
+            strokeWidth="1"
+          />
+        ))}
+      </g>
+      <path d={areaPath} fill={fill} />
+      <path d={linePath} fill="none" stroke={stroke} strokeWidth="2" />
       <circle
-        cx={size / 2}
-        cy={size / 2}
-        r={radius}
-        stroke="rgba(250, 204, 21, 0.15)"
-        strokeWidth="10"
-        fill="none"
+        cx={points[points.length - 1].x}
+        cy={points[points.length - 1].y}
+        r="4"
+        fill={stroke}
       />
-      <circle
-        cx={size / 2}
-        cy={size / 2}
-        r={radius}
-        stroke={isValid ? `url(#${gradientId})` : "rgba(148,163,184,0.3)"}
-        strokeWidth="12"
-        fill="none"
-        strokeDasharray={circumference}
-        strokeDashoffset={offset}
-        strokeLinecap="round"
-        transform={`rotate(-90 ${size / 2} ${size / 2})`}
-        filter={`url(#${glowId})`}
-      />
-      <text
-        x="50%"
-        y="48%"
-        textAnchor="middle"
-        className="fill-slate-100 text-sm font-semibold"
-      >
-        {isValid ? `${clamped.toFixed(0)}%` : "N/A"}
-      </text>
-      <text
-        x="50%"
-        y="64%"
-        textAnchor="middle"
-        className="fill-slate-400 text-[10px] uppercase tracking-[0.3em]"
-      >
-        {label}
-      </text>
     </svg>
   );
 }
 
-function SparkBars({ values }: { values: number[] }) {
-  const max = Math.max(...values, 1);
-  return (
-    <div className="flex items-end gap-1">
-      {values.map((value, index) => {
-        const height = Math.max(6, Math.round((value / max) * 34));
-        return (
-          <span
-            key={`spark-${index}`}
-            className="w-2 rounded-full bg-gradient-to-t from-orange-500 to-amber-200"
-            style={{ height }}
-          />
-        );
-      })}
-    </div>
-  );
-}
+type HeartRowProps = {
+  ok: number;
+  warn: number;
+  error: number;
+  sizeClass?: string;
+};
 
-function MeterBar({ value, label }: { value: number | null | undefined; label: string }) {
-  const percent = Number.isFinite(value)
-    ? Math.min(Math.max(value ?? 0, 0), 100)
-    : null;
+function HeartRow({ ok, warn, error, sizeClass = "h-10 w-10" }: HeartRowProps) {
+  const hearts: { tone: "ok" | "warn" | "error" | "idle"; key: string }[] = [];
+  for (let i = 0; i < ok; i += 1) hearts.push({ tone: "ok", key: `ok-${i}` });
+  for (let i = 0; i < warn; i += 1) hearts.push({ tone: "warn", key: `warn-${i}` });
+  for (let i = 0; i < error; i += 1) hearts.push({ tone: "error", key: `err-${i}` });
+  if (hearts.length === 0) {
+    for (let i = 0; i < 3; i += 1) hearts.push({ tone: "idle", key: `idle-${i}` });
+  }
+
+  const toneClass = (tone: "ok" | "warn" | "error" | "idle") => {
+    if (tone === "ok") return "text-emerald-300";
+    if (tone === "warn") return "text-amber-300";
+    if (tone === "error") return "text-rose-400";
+    return "text-slate-500/40";
+  };
 
   return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between text-xs uppercase tracking-[0.25em] text-slate-500">
-        <span>{label}</span>
-        <span>{percent !== null ? `${percent.toFixed(0)}%` : "N/A"}</span>
-      </div>
-      <div className="h-2 w-full rounded-full bg-black/40">
-        <div
-          className="h-2 rounded-full bg-gradient-to-r from-amber-300 via-orange-400 to-orange-600"
-          style={{ width: percent !== null ? `${percent}%` : "12%", opacity: percent !== null ? 1 : 0.4 }}
+    <div className="flex flex-wrap items-center gap-2">
+      {hearts.map((heart) => (
+        <IconHeart
+          key={heart.key}
+          className={`${sizeClass} ${toneClass(heart.tone)}`}
         />
-      </div>
+      ))}
     </div>
   );
 }
@@ -181,51 +202,83 @@ export default function Home() {
   const [disks, setDisks] = useState<DiskInfo[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authLoaded, setAuthLoaded] = useState(false);
+  const [loadHistory, setLoadHistory] = useState<number[]>([]);
+  const [cpuHistory, setCpuHistory] = useState<number[]>([]);
+  const [memoryHistory, setMemoryHistory] = useState<number[]>([]);
+  const [storageHistory, setStorageHistory] = useState<number[]>([]);
+
+  const fetchData = useCallback(async (manual = false) => {
+    if (manual) {
+      setIsRefreshing(true);
+    }
+
+    try {
+      const [metricsRes, disksRes] = await Promise.all([
+        fetch("/api/public/metrics", { cache: "no-store" }),
+        fetch("/api/public/disks", { cache: "no-store" }),
+      ]);
+
+      if (!metricsRes.ok || !disksRes.ok) {
+        throw new Error("Failed to load server stats");
+      }
+
+      const metricsData = (await metricsRes.json()) as MetricsResponse;
+      const disksData = (await disksRes.json()) as DisksResponse;
+
+      setMetrics(metricsData);
+      setDisks(disksData.disks ?? []);
+      setLastUpdated(new Date());
+      setError(null);
+
+      setLoadHistory((prev) =>
+        [...prev, metricsData.cpu.loadAverages[0] ?? 0].slice(-MAX_HISTORY)
+      );
+      setCpuHistory((prev) =>
+        [...prev, metricsData.cpu.usagePercent ?? 0].slice(-MAX_HISTORY)
+      );
+      setMemoryHistory((prev) =>
+        [...prev, metricsData.memory.usedPercent ?? 0].slice(-MAX_HISTORY)
+      );
+      const storageSummary = getStorageSummary(getStorageDisks(disksData.disks ?? []));
+      setStorageHistory((prev) =>
+        [...prev, storageSummary?.usedPercent ?? 0].slice(-MAX_HISTORY)
+      );
+    } catch {
+      setError("Unable to reach the ops agent. Retrying every 5s.");
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  }, []);
 
   useEffect(() => {
     let mounted = true;
 
-    const fetchData = async () => {
-      try {
-        const [metricsRes, disksRes] = await Promise.all([
-          fetch("/api/public/metrics", { cache: "no-store" }),
-          fetch("/api/public/disks", { cache: "no-store" }),
-        ]);
-
-        if (!metricsRes.ok || !disksRes.ok) {
-          throw new Error("Failed to load server stats");
-        }
-
-        const metricsData = (await metricsRes.json()) as MetricsResponse;
-        const disksData = (await disksRes.json()) as DisksResponse;
-
+    const startPolling = async () => {
+      if (!mounted) return;
+      await fetchData();
+      const interval = setInterval(() => {
         if (!mounted) return;
+        void fetchData();
+      }, POLL_INTERVAL_MS);
 
-        setMetrics(metricsData);
-        setDisks(disksData.disks ?? []);
-        setLastUpdated(new Date());
-        setError(null);
-      } catch {
-        if (!mounted) return;
-        setError("Unable to reach the ops agent. Retrying every 5s.");
-      } finally {
-        if (mounted) {
-          setIsLoading(false);
-        }
-      }
+      return () => clearInterval(interval);
     };
 
-    fetchData();
-    const interval = setInterval(fetchData, POLL_INTERVAL_MS);
+    let cleanup: (() => void) | null = null;
+    void startPolling().then((stop) => {
+      cleanup = stop ?? null;
+    });
 
     return () => {
       mounted = false;
-      clearInterval(interval);
+      if (cleanup) cleanup();
     };
-  }, []);
+  }, [fetchData]);
 
   useEffect(() => {
     let mounted = true;
@@ -262,53 +315,28 @@ export default function Home() {
     };
   }, []);
 
-  const storageDisks = useMemo(() => {
-    const filtered = disks.filter(
-      (disk) => disk.mount === "/" || disk.mount.startsWith(STORAGE_MOUNT_PREFIX)
-    );
+  const storageDisks = useMemo(() => getStorageDisks(disks), [disks]);
+  const storageSummary = useMemo(() => getStorageSummary(storageDisks), [storageDisks]);
 
-    return [...filtered].sort((a, b) => {
-      const aIsRoot = a.mount === "/";
-      const bIsRoot = b.mount === "/";
-
-      if (aIsRoot && !bIsRoot) return -1;
-      if (!aIsRoot && bIsRoot) return 1;
-
-      const aUsed = Number.isFinite(a.usedPercent) ? a.usedPercent : 0;
-      const bUsed = Number.isFinite(b.usedPercent) ? b.usedPercent : 0;
-
-      return bUsed - aUsed;
-    });
-  }, [disks]);
-
-  const storageSummary = useMemo(() => {
-    if (storageDisks.length === 0) {
-      return null;
+  const statusCounts = useMemo(() => {
+    if (error) {
+      return { ok: 0, warn: 0, error: 3 };
+    }
+    if (!metrics) {
+      return { ok: 0, warn: 0, error: 0 };
     }
 
-    const totalBytes = storageDisks.reduce(
-      (sum, disk) => sum + disk.sizeBytes,
-      0
-    );
-    const usedBytes = storageDisks.reduce(
-      (sum, disk) => sum + disk.usedBytes,
-      0
-    );
-    const usedPercent = totalBytes > 0 ? (usedBytes / totalBytes) * 100 : 0;
+    const checks = [
+      metrics.cpu.usagePercent >= WARNING_THRESHOLDS.cpu,
+      metrics.memory.usedPercent >= WARNING_THRESHOLDS.memory,
+      storageDisks.some((disk) => disk.usedPercent >= WARNING_THRESHOLDS.disk),
+    ];
 
-    return { totalBytes, usedBytes, usedPercent };
-  }, [storageDisks]);
+    const warn = checks.filter(Boolean).length;
+    const ok = checks.length - warn;
 
-  const health = useMemo(() => {
-    if (!metrics) return "Unknown";
-    const cpuWarn = metrics.cpu.usagePercent >= WARNING_THRESHOLDS.cpu;
-    const memoryWarn = metrics.memory.usedPercent >= WARNING_THRESHOLDS.memory;
-    const diskWarn = storageDisks.some(
-      (disk) => disk.usedPercent >= WARNING_THRESHOLDS.disk
-    );
-
-    return cpuWarn || memoryWarn || diskWarn ? "Warning" : "OK";
-  }, [metrics, storageDisks]);
+    return { ok, warn, error: 0 };
+  }, [error, metrics, storageDisks]);
 
   const lastUpdatedLabel = lastUpdated ? lastUpdated.toLocaleTimeString() : "--";
 
@@ -323,19 +351,32 @@ export default function Home() {
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-10 px-6 py-10">
         <header className="flex flex-col gap-6 rounded-[32px] border border-orange-500/20 bg-[#120c08]/80 p-8 shadow-[0_20px_60px_rgba(14,8,4,0.65)] md:flex-row md:items-center md:justify-between motion-safe:animate-[fade-up_0.6s_ease-out]">
           <div className="space-y-3">
-            <p className="text-xs uppercase tracking-[0.4em] text-amber-200/70">
-              ajmsd-ops
-            </p>
             <h1 className="font-[var(--font-display)] text-3xl font-semibold text-amber-100 md:text-4xl">
-              Emberline Monitor
+              AJMSD Ops
             </h1>
-            <p className="max-w-xl text-sm text-amber-100/70">
-              Public telemetry with a warm signal glow. Updates every 5 seconds.
-            </p>
+            <div className="flex items-center gap-3 text-[11px] uppercase tracking-[0.3em] text-amber-200/70">
+              <span>Last updated {lastUpdatedLabel}</span>
+              <button
+                className="flex h-9 w-9 items-center justify-center rounded-full border border-orange-400/40 bg-orange-400/10 text-orange-100 transition hover:border-orange-300 hover:bg-orange-400/20"
+                type="button"
+                onClick={() => void fetchData(true)}
+                disabled={isRefreshing}
+                aria-label="Refresh telemetry"
+                title="Refresh telemetry"
+              >
+                <IconRefresh className="h-4 w-4" />
+              </button>
+            </div>
           </div>
-          <div className="flex flex-wrap items-center gap-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <HeartRow
+              ok={statusCounts.ok}
+              warn={statusCounts.warn}
+              error={statusCounts.error}
+              sizeClass="h-11 w-11"
+            />
             <Link
-              className="group relative flex h-12 w-12 items-center justify-center rounded-full border border-orange-400/50 bg-orange-400/10 text-orange-100 transition hover:border-orange-300 hover:bg-orange-400/20"
+              className="flex h-11 w-11 items-center justify-center rounded-full border border-orange-400/50 bg-orange-400/10 text-orange-100 transition hover:border-orange-300 hover:bg-orange-400/20"
               href={isAuthenticated ? "/app" : "/login?next=/app"}
               aria-label={isAuthenticated ? "Open private dashboard" : "Login"}
               title={isAuthenticated ? "Private" : "Login"}
@@ -350,21 +391,6 @@ export default function Home() {
                 <div className="h-2 w-2 rounded-full bg-amber-200/70" />
               )}
             </Link>
-            <div className="rounded-3xl border border-orange-400/20 bg-black/40 px-5 py-4">
-              <div className="text-xs uppercase tracking-[0.3em] text-amber-200/70">
-                Status
-              </div>
-              <div
-                className={`mt-2 text-2xl font-semibold ${
-                  health === "OK" ? "text-emerald-300" : "text-orange-300"
-                }`}
-              >
-                {health}
-              </div>
-              <div className="mt-1 text-xs text-amber-100/60">
-                Updated {lastUpdatedLabel}
-              </div>
-            </div>
           </div>
         </header>
 
@@ -374,191 +400,130 @@ export default function Home() {
           </div>
         ) : null}
 
-        <section className="grid gap-4 lg:grid-cols-3">
+        <section className="grid gap-4 lg:grid-cols-[2fr_1fr]">
           <div className="rounded-[28px] border border-orange-500/20 bg-[#120c08]/75 p-6 shadow-[0_16px_40px_rgba(8,5,3,0.6)]">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
                 <p className="text-xs uppercase tracking-[0.3em] text-amber-200/70">
-                  CPU
+                  Load Timeline
                 </p>
                 <h2 className="mt-2 font-[var(--font-display)] text-2xl text-amber-100">
-                  {metrics?.cpu?.name ?? (isLoading ? "Loading..." : "Unknown")}
+                  {metrics ? metrics.cpu.name : isLoading ? "Loading..." : "Unknown"}
                 </h2>
               </div>
-              <RingGauge
-                value={metrics?.cpu?.usagePercent ?? null}
-                label="Usage"
-              />
+              <div className="text-[11px] uppercase tracking-[0.3em] text-amber-200/60">
+                10 segments (last minute)
+              </div>
             </div>
-            <div className="mt-6 flex items-center justify-between text-sm text-amber-100/70">
+            <div className="mt-6">
+              <LineChart data={loadHistory.length ? loadHistory : [0, 0]} />
+            </div>
+            <div className="mt-4 grid gap-4 text-sm text-amber-100/70 sm:grid-cols-3">
               <div>
-                <div className="text-xs uppercase tracking-[0.3em] text-amber-200/50">
-                  Load 1/5/15
-                </div>
-                <div className="mt-1">
-                  {metrics
-                    ? metrics.cpu.loadAverages
-                        .map((value) => value.toFixed(2))
-                        .join(" / ")
-                    : "--"}
-                </div>
+                <div className="text-[11px] uppercase tracking-[0.3em] text-amber-200/60">Load 1m</div>
+                <div>{metrics ? metrics.cpu.loadAverages[0].toFixed(2) : "--"}</div>
               </div>
-              <SparkBars values={metrics?.cpu?.loadAverages ?? [0.4, 0.2, 0.1]} />
-            </div>
-          </div>
-
-          <div className="rounded-[28px] border border-orange-500/20 bg-[#120c08]/75 p-6 shadow-[0_16px_40px_rgba(8,5,3,0.6)]">
-            <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs uppercase tracking-[0.3em] text-amber-200/70">
-                  Memory
-                </p>
-                <h2 className="mt-2 font-[var(--font-display)] text-2xl text-amber-100">
-                  {metrics ? formatBytes(metrics.memory.usedBytes) : "--"}
-                </h2>
-                <p className="text-xs text-amber-100/60">
-                  of {metrics ? formatBytes(metrics.memory.totalBytes) : "--"}
-                </p>
+                <div className="text-[11px] uppercase tracking-[0.3em] text-amber-200/60">Load 5m</div>
+                <div>{metrics ? metrics.cpu.loadAverages[1].toFixed(2) : "--"}</div>
               </div>
-              <RingGauge
-                value={metrics?.memory?.usedPercent ?? null}
-                label="Used"
-              />
-            </div>
-            <div className="mt-6 text-sm text-amber-100/70">
-              <div className="text-xs uppercase tracking-[0.3em] text-amber-200/50">
-                Free Memory
-              </div>
-              <div className="mt-1">
-                {metrics ? formatBytes(metrics.memory.freeBytes) : "--"}
+              <div>
+                <div className="text-[11px] uppercase tracking-[0.3em] text-amber-200/60">Load 15m</div>
+                <div>{metrics ? metrics.cpu.loadAverages[2].toFixed(2) : "--"}</div>
               </div>
             </div>
           </div>
 
-          <div className="rounded-[28px] border border-orange-500/20 bg-[#120c08]/75 p-6 shadow-[0_16px_40px_rgba(8,5,3,0.6)]">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs uppercase tracking-[0.3em] text-amber-200/70">
-                  Storage
-                </p>
-                <h2 className="mt-2 font-[var(--font-display)] text-2xl text-amber-100">
-                  {storageSummary
-                    ? formatBytes(storageSummary.usedBytes)
-                    : "--"}
-                </h2>
-                <p className="text-xs text-amber-100/60">
-                  of {storageSummary
-                    ? formatBytes(storageSummary.totalBytes)
-                    : "--"}
-                </p>
+          <div className="space-y-4">
+            <div className="rounded-[24px] border border-orange-500/20 bg-[#120c08]/70 p-5">
+              <p className="text-xs uppercase tracking-[0.3em] text-amber-200/70">CPU Usage</p>
+              <div className="mt-2 text-2xl font-semibold text-amber-100">
+                {metrics ? `${metrics.cpu.usagePercent.toFixed(1)}%` : isLoading ? "Loading..." : "--"}
               </div>
-              <RingGauge
-                value={storageSummary?.usedPercent ?? null}
-                label="Used"
-              />
+              <div className="mt-4">
+                <LineChart data={cpuHistory.length ? cpuHistory : [0, 0]} height={110} />
+              </div>
             </div>
-            <div className="mt-6 text-sm text-amber-100/70">
-              <div className="text-xs uppercase tracking-[0.3em] text-amber-200/50">
-                Uptime
+
+            <div className="rounded-[24px] border border-orange-500/20 bg-[#120c08]/70 p-5">
+              <p className="text-xs uppercase tracking-[0.3em] text-amber-200/70">Memory</p>
+              <div className="mt-2 text-2xl font-semibold text-amber-100">
+                {metrics ? `${metrics.memory.usedPercent.toFixed(1)}%` : isLoading ? "Loading..." : "--"}
               </div>
-              <div className="mt-1">
-                {metrics ? formatUptime(metrics.uptimeSeconds) : "--"}
+              <div className="mt-4">
+                <LineChart data={memoryHistory.length ? memoryHistory : [0, 0]} height={110} stroke="#f59e0b" fill="rgba(245,158,11,0.2)" />
               </div>
             </div>
           </div>
         </section>
 
-        <section className="grid gap-4 lg:grid-cols-2">
-          <div className="rounded-[28px] border border-orange-500/20 bg-[#120c08]/75 p-6 shadow-[0_16px_40px_rgba(8,5,3,0.6)]">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs uppercase tracking-[0.3em] text-amber-200/70">
-                  NVIDIA GPU
-                </p>
-                <h3 className="mt-2 text-lg font-semibold text-amber-100">
-                  {metrics?.gpu?.name ?? (isLoading ? "Loading..." : "Not detected")}
-                </h3>
-              </div>
-              <RingGauge
-                value={metrics?.gpu?.utilizationPercent ?? null}
-                label="Usage"
-                size={96}
-              />
+        <section className="grid gap-4 lg:grid-cols-[1fr_2fr]">
+          <div className="rounded-[24px] border border-orange-500/20 bg-[#120c08]/70 p-5">
+            <p className="text-xs uppercase tracking-[0.3em] text-amber-200/70">Storage</p>
+            <div className="mt-2 text-2xl font-semibold text-amber-100">
+              {storageSummary ? `${storageSummary.usedPercent.toFixed(1)}%` : isLoading ? "Loading..." : "--"}
+            </div>
+            <div className="mt-1 text-xs text-amber-100/60">
+              {storageSummary
+                ? `${formatBytes(storageSummary.usedBytes)} / ${formatBytes(storageSummary.totalBytes)}`
+                : "--"}
             </div>
             <div className="mt-4">
-              <MeterBar
-                value={metrics?.gpu?.temperatureC ?? null}
-                label="Temperature"
-              />
+              <LineChart data={storageHistory.length ? storageHistory : [0, 0]} height={110} stroke="#f97316" fill="rgba(249,115,22,0.22)" />
+            </div>
+            <div className="mt-4 text-xs text-amber-100/70">
+              Uptime: {metrics ? formatUptime(metrics.uptimeSeconds) : "--"}
             </div>
           </div>
 
-          <div className="rounded-[28px] border border-orange-500/20 bg-[#120c08]/75 p-6 shadow-[0_16px_40px_rgba(8,5,3,0.6)]">
+          <div className="rounded-[28px] border border-orange-500/20 bg-[#120c08]/75 p-6">
             <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs uppercase tracking-[0.3em] text-amber-200/70">
-                  Intel GPU
-                </p>
-                <h3 className="mt-2 text-lg font-semibold text-amber-100">
-                  {metrics?.gpuIntel?.name ?? (isLoading ? "Loading..." : "Not detected")}
-                </h3>
+              <h2 className="font-[var(--font-display)] text-2xl text-amber-100">Disk Terrain</h2>
+              <span className="text-[11px] uppercase tracking-[0.3em] text-amber-200/60">
+                Updated {lastUpdatedLabel}
+              </span>
+            </div>
+
+            {storageDisks.length === 0 ? (
+              <div className="mt-6 rounded-2xl border border-orange-500/20 bg-black/40 px-4 py-6 text-sm text-amber-100/70">
+                {isLoading ? "Loading disks..." : "No disks reported."}
               </div>
-              <RingGauge
-                value={metrics?.gpuIntel?.utilizationPercent ?? null}
-                label="Usage"
-                size={96}
-              />
-            </div>
-            <div className="mt-4">
-              <MeterBar
-                value={metrics?.gpuIntel?.temperatureC ?? null}
-                label="Temperature"
-              />
-            </div>
-          </div>
-        </section>
-
-        <section className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="font-[var(--font-display)] text-2xl text-amber-100">
-              Disk Terrain
-            </h2>
-            <span className="text-xs uppercase tracking-[0.3em] text-amber-200/60">
-              Updated {lastUpdatedLabel}
-            </span>
-          </div>
-
-          {storageDisks.length === 0 ? (
-            <div className="rounded-2xl border border-orange-500/20 bg-[#120c08]/60 px-4 py-6 text-sm text-amber-100/70">
-              {isLoading ? "Loading disks..." : "No disks reported."}
-            </div>
-          ) : (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {storageDisks.map((disk) => (
-                <div
-                  key={`${disk.filesystem}-${disk.mount}`}
-                  className="rounded-[24px] border border-orange-500/20 bg-[#120c08]/70 p-5"
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <div className="text-sm font-semibold text-amber-100">
-                        {getDiskLabel(disk.mount)}
+            ) : (
+              <div className="mt-6 grid gap-4 sm:grid-cols-2">
+                {storageDisks.map((disk) => (
+                  <div
+                    key={`${disk.filesystem}-${disk.mount}`}
+                    className="rounded-[20px] border border-orange-500/20 bg-black/40 p-4"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="text-sm font-semibold text-amber-100">
+                          {getDiskLabel(disk.mount)}
+                        </div>
+                        <div className="text-[10px] uppercase tracking-[0.3em] text-amber-200/60">
+                          {(disk.driveType ?? "unknown") === "unknown"
+                            ? "Unknown"
+                            : disk.driveType.toUpperCase()}
+                        </div>
                       </div>
-                      <div className="text-xs uppercase tracking-[0.3em] text-amber-200/50">
-                        {(disk.driveType ?? "unknown") === "unknown"
-                          ? "Unknown"
-                          : disk.driveType.toUpperCase()}
+                      <div className="text-sm font-semibold text-amber-100">
+                        {disk.usedPercent.toFixed(1)}%
                       </div>
                     </div>
-                    <RingGauge value={disk.usedPercent} label="Used" size={80} />
+                    <div className="mt-3 h-2 w-full rounded-full bg-black/40">
+                      <div
+                        className="h-2 rounded-full bg-gradient-to-r from-amber-300 via-orange-400 to-orange-600"
+                        style={{ width: `${disk.usedPercent}%` }}
+                      />
+                    </div>
+                    <div className="mt-3 text-xs text-amber-100/60">
+                      {formatBytes(disk.usedBytes)} / {formatBytes(disk.sizeBytes)}
+                    </div>
                   </div>
-                  <div className="mt-4 text-xs text-amber-100/70">
-                    {formatBytes(disk.usedBytes)} / {formatBytes(disk.sizeBytes)}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+                ))}
+              </div>
+            )}
+          </div>
         </section>
       </div>
     </div>

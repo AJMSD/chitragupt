@@ -126,6 +126,25 @@ export function IconFolder(props: IconProps) {
   );
 }
 
+export function IconFile(props: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={cx(props.className)}
+      {...props}
+    >
+      <path d="M7 3h6l4 4v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" />
+      <path d="M13 3v4h4" />
+    </svg>
+  );
+}
+
 export function IconTerminal(props: IconProps) {
   return (
     <svg
@@ -142,6 +161,21 @@ export function IconTerminal(props: IconProps) {
       <rect x="3" y="5" width="18" height="14" rx="2" />
       <path d="M7 9l3 3-3 3" />
       <path d="M12 15h4" />
+    </svg>
+  );
+}
+
+export function IconHeart(props: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      stroke="none"
+      className={cx(props.className)}
+      {...props}
+    >
+      <path d="M12 21s-6.5-4.3-9-8.1C1.1 9.2 2.4 5.7 5.7 4.7c2-.6 4 .2 5.3 2 1.3-1.8 3.3-2.6 5.3-2 3.3 1 4.6 4.5 2.7 8.2C18.5 16.7 12 21 12 21z" />
     </svg>
   );
 }

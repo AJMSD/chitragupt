@@ -1,8 +1,9 @@
-"use client";
+﻿"use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   IconDownload,
+  IconFile,
   IconFolder,
   IconRefresh,
 } from "@/app/components/icons";
@@ -103,13 +104,13 @@ export default function FilesPage() {
 
   const breadcrumbs = useMemo(() => {
     const segments = currentPath.split("/").filter(Boolean);
-    const items = [{ label: "Root", path: "" }];
+    const items = [{ label: activeRoot?.label ?? "Root", path: "" }];
     segments.forEach((segment, index) => {
       const nextPath = segments.slice(0, index + 1).join("/");
       items.push({ label: segment, path: nextPath });
     });
     return items;
-  }, [currentPath]);
+  }, [currentPath, activeRoot]);
 
   const updatedLabel = lastUpdated ? lastUpdated.toLocaleTimeString() : "--";
 
@@ -117,9 +118,9 @@ export default function FilesPage() {
     <section className="space-y-6">
       <div className="rounded-[28px] border border-orange-500/20 bg-[#120c08]/80 p-6">
         <h2 className="font-[var(--font-display)] text-2xl text-amber-100">
-          Files Vault
+          File Explorer
         </h2>
-        <p className="mt-2 text-sm text-amber-100/70">
+        <p className="mt-2 text-xs text-amber-100/70">
           Browse allowlisted roots and download files securely.
         </p>
         <p className="mt-2 text-xs uppercase tracking-[0.3em] text-amber-200/60">
@@ -129,7 +130,7 @@ export default function FilesPage() {
 
       <div className="rounded-[24px] border border-orange-500/20 bg-[#120c08]/70 p-5">
         <div className="text-xs uppercase tracking-[0.3em] text-amber-200/70">
-          Root Selector
+          Roots
         </div>
         {rootsError ? (
           <div className="mt-3 rounded-2xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
@@ -142,24 +143,37 @@ export default function FilesPage() {
             No allowlisted roots configured.
           </div>
         ) : (
-          <div className="mt-3 flex flex-wrap items-center gap-3">
-            <select
-              className="rounded-2xl border border-orange-500/30 bg-black/40 px-4 py-2 text-sm text-amber-50 focus:border-orange-300/70 focus:outline-none"
-              value={currentRoot}
-              onChange={(event) => {
-                setCurrentRoot(event.target.value);
-                setCurrentPath("");
-              }}
-            >
-              {roots.map((root) => (
-                <option key={root.id} value={root.id}>
-                  {root.label}
-                </option>
-              ))}
-            </select>
-            {activeRoot ? (
-              <div className="text-xs text-amber-100/60">{activeRoot.path}</div>
-            ) : null}
+          <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {roots.map((root) => {
+              const isActive = root.id === currentRoot;
+              return (
+                <button
+                  key={root.id}
+                  type="button"
+                  onClick={() => {
+                    setCurrentRoot(root.id);
+                    setCurrentPath("");
+                  }}
+                  className={`flex items-center gap-4 rounded-[20px] border px-4 py-4 text-left transition ${
+                    isActive
+                      ? "border-orange-400/70 bg-orange-400/10"
+                      : "border-orange-500/20 bg-black/40 hover:border-orange-400/60 hover:bg-orange-400/10"
+                  }`}
+                >
+                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-orange-400/40 bg-orange-400/10 text-orange-100">
+                    <IconFolder className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <div className="text-sm font-semibold text-amber-100">
+                      {root.label}
+                    </div>
+                    <div className="text-[10px] uppercase tracking-[0.3em] text-amber-200/60">
+                      Root folder
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
           </div>
         )}
       </div>
@@ -170,15 +184,15 @@ export default function FilesPage() {
             <div className="text-xs uppercase tracking-[0.3em] text-amber-200/70">
               Location
             </div>
-            <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-amber-100">
-              {breadcrumbs.map((crumb) => (
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-amber-100/80">
+              {breadcrumbs.map((crumb, index) => (
                 <button
                   key={crumb.path}
                   type="button"
                   onClick={() => setCurrentPath(crumb.path)}
                   className="rounded-full border border-orange-500/20 px-3 py-1 text-[10px] uppercase tracking-[0.3em] text-amber-100/70 transition hover:border-orange-400/60 hover:text-amber-100"
                 >
-                  {crumb.label}
+                  {index === 0 ? "Home" : crumb.label}
                 </button>
               ))}
             </div>
@@ -210,7 +224,7 @@ export default function FilesPage() {
             {currentRoot ? "No files found in this folder." : "Select a root to browse."}
           </div>
         ) : (
-          <div className="mt-4 space-y-3">
+          <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {entries.map((entry) => {
               const entryPath = joinPath(currentPath, entry.name);
               const downloadParams = new URLSearchParams({
@@ -218,44 +232,57 @@ export default function FilesPage() {
                 path: entryPath,
               });
               const downloadUrl = `/api/private/files/download?${downloadParams.toString()}`;
+              const isDir = entry.type === "dir";
+              const isFile = entry.type === "file";
 
               return (
                 <div
                   key={`${entry.type}-${entry.name}`}
-                  className="flex flex-wrap items-center justify-between gap-4 rounded-[20px] border border-orange-500/20 bg-black/40 px-4 py-3"
+                  className="group relative rounded-[20px] border border-orange-500/20 bg-black/40 p-4 transition hover:border-orange-400/60"
                 >
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-semibold text-amber-100">
-                      {entry.name}
+                  <div className="flex items-center gap-4">
+                    <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-orange-400/40 bg-orange-400/10 text-orange-100">
+                      {isDir ? (
+                        <IconFolder className="h-5 w-5" />
+                      ) : (
+                        <IconFile className="h-5 w-5" />
+                      )}
                     </div>
-                    <div className="text-[10px] uppercase tracking-[0.3em] text-amber-200/50">
-                      {entry.type}
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-semibold text-amber-100">
+                        {entry.name}
+                      </div>
+                      <div className="text-[10px] uppercase tracking-[0.3em] text-amber-200/50">
+                        {entry.type}
+                      </div>
                     </div>
                   </div>
-                  <div className="flex flex-wrap items-center gap-4 text-xs text-amber-100/70">
-                    <div>{formatBytes(entry.sizeBytes)}</div>
-                    <div>{formatModified(entry.modifiedMs)}</div>
-                    {entry.type === "dir" ? (
+                  <div className="mt-3 text-xs text-amber-100/60">
+                    {formatBytes(entry.sizeBytes)} | {formatModified(entry.modifiedMs)}
+                  </div>
+
+                  <div className="absolute inset-0 flex items-center justify-center rounded-[20px] bg-black/70 opacity-0 transition group-hover:opacity-100">
+                    {isDir ? (
                       <button
-                        className="flex h-10 w-10 items-center justify-center rounded-full border border-orange-500/30 text-orange-100 transition hover:border-orange-400/60 hover:bg-orange-400/10"
+                        className="flex h-12 w-12 items-center justify-center rounded-full border border-orange-400/50 bg-orange-400/10 text-orange-100"
                         type="button"
                         onClick={() => setCurrentPath(entryPath)}
                         aria-label="Open folder"
                         title="Open folder"
                       >
-                        <IconFolder className="h-4 w-4" />
+                        <IconFolder className="h-5 w-5" />
                       </button>
-                    ) : entry.type === "file" ? (
+                    ) : isFile ? (
                       <a
-                        className="flex h-10 w-10 items-center justify-center rounded-full border border-orange-500/30 text-orange-100 transition hover:border-orange-400/60 hover:bg-orange-400/10"
+                        className="flex h-12 w-12 items-center justify-center rounded-full border border-orange-400/50 bg-orange-400/10 text-orange-100"
                         href={downloadUrl}
                         aria-label="Download file"
                         title="Download file"
                       >
-                        <IconDownload className="h-4 w-4" />
+                        <IconDownload className="h-5 w-5" />
                       </a>
                     ) : (
-                      <span className="rounded-full border border-orange-500/20 px-3 py-1 text-[10px] uppercase tracking-[0.3em] text-amber-200/50">
+                      <span className="text-xs uppercase tracking-[0.3em] text-amber-200/60">
                         Unavailable
                       </span>
                     )}

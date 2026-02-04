@@ -1,7 +1,7 @@
 ﻿"use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { IconRefresh } from "@/app/components/icons";
+import { IconHeart, IconRefresh } from "@/app/components/icons";
 import type {
   DockerContainerInfo,
   DockerContainersResponse,
@@ -12,22 +12,27 @@ import { fetchJson, formatApiError } from "@/lib/client";
 
 type StatusTone = "emerald" | "amber" | "rose" | "slate";
 
-function StatusBadge({ tone, label }: { tone: StatusTone; label: string }) {
-  const toneClass =
-    tone === "emerald"
-      ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-100"
-      : tone === "amber"
-      ? "border-orange-300/30 bg-orange-300/10 text-orange-100"
-      : tone === "rose"
-      ? "border-rose-400/30 bg-rose-400/10 text-rose-100"
-      : "border-slate-700 bg-slate-900/70 text-slate-300";
+function toneClass(tone: StatusTone) {
+  if (tone === "emerald") return "text-emerald-300";
+  if (tone === "amber") return "text-amber-300";
+  if (tone === "rose") return "text-rose-400";
+  return "text-slate-500/40";
+}
+
+function HeartGroup({ label, count, tone }: { label: string; count: number; tone: StatusTone }) {
+  const hearts = Array.from({ length: count }, (_, index) => (
+    <IconHeart key={`${label}-${index}`} className={`h-6 w-6 ${toneClass(tone)}`} />
+  ));
 
   return (
-    <span
-      className={`rounded-full border px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.3em] ${toneClass}`}
-    >
-      {label}
-    </span>
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-[10px] uppercase tracking-[0.3em] text-amber-200/60">
+        {label}
+      </span>
+      <div className="flex flex-wrap items-center gap-1">
+        {hearts.length > 0 ? hearts : <span className="text-xs text-amber-100/50">0</span>}
+      </div>
+    </div>
   );
 }
 
@@ -38,9 +43,7 @@ function getContainerStateTone(state: DockerContainerInfo["state"]): StatusTone 
   return "slate";
 }
 
-function getContainerHealthTone(
-  health: DockerContainerInfo["health"]
-): StatusTone {
+function getContainerHealthTone(health: DockerContainerInfo["health"]): StatusTone {
   if (health === "healthy") return "emerald";
   if (health === "unhealthy") return "rose";
   if (health === "starting") return "amber";
@@ -159,8 +162,9 @@ export default function ServicesPage() {
           <div className="mt-3 text-2xl font-semibold text-amber-100">
             {isLoading ? "Loading..." : containerSummary.total}
           </div>
-          <div className="mt-2 text-sm text-amber-100/70">
-            {containerSummary.running} running � {containerSummary.unhealthy} unhealthy
+          <div className="mt-4 flex flex-wrap items-center gap-4">
+            <HeartGroup label="Running" count={containerSummary.running} tone="emerald" />
+            <HeartGroup label="Unhealthy" count={containerSummary.unhealthy} tone="rose" />
           </div>
         </div>
         <div className="rounded-[24px] border border-orange-500/20 bg-[#120c08]/70 p-5">
@@ -170,8 +174,9 @@ export default function ServicesPage() {
           <div className="mt-3 text-2xl font-semibold text-amber-100">
             {isLoading ? "Loading..." : unitSummary.total}
           </div>
-          <div className="mt-2 text-sm text-amber-100/70">
-            {unitSummary.running} active � {unitSummary.failed} failed
+          <div className="mt-4 flex flex-wrap items-center gap-4">
+            <HeartGroup label="Active" count={unitSummary.running} tone="emerald" />
+            <HeartGroup label="Failed" count={unitSummary.failed} tone="rose" />
           </div>
         </div>
       </div>
@@ -197,42 +202,46 @@ export default function ServicesPage() {
           </div>
         ) : (
           <div className="grid gap-4">
-            {containers.map((container) => (
-              <div
-                key={container.id}
-                className="rounded-[24px] border border-orange-500/20 bg-[#120c08]/70 p-5"
-              >
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="text-xs uppercase tracking-[0.3em] text-amber-200/60">
-                      Container
+            {containers.map((container) => {
+              const stateTone = getContainerStateTone(container.state);
+              const healthTone = getContainerHealthTone(container.health);
+              return (
+                <div
+                  key={container.id}
+                  className="rounded-[24px] border border-orange-500/20 bg-[#120c08]/70 p-5"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-xs uppercase tracking-[0.3em] text-amber-200/60">
+                        Container
+                      </div>
+                      <div className="truncate text-lg font-semibold text-amber-100">
+                        {container.name}
+                      </div>
+                      <div className="text-xs text-amber-100/60">
+                        {container.image}
+                      </div>
                     </div>
-                    <div className="truncate text-lg font-semibold text-amber-100">
-                      {container.name}
-                    </div>
-                    <div className="text-xs text-amber-100/60">
-                      {container.image}
+                    <div className="flex items-center gap-3">
+                      <IconHeart
+                        className={`h-7 w-7 ${toneClass(stateTone)}`}
+                        title={`State: ${container.state}`}
+                      />
+                      <IconHeart
+                        className={`h-7 w-7 ${toneClass(healthTone)}`}
+                        title={`Health: ${container.health}`}
+                      />
                     </div>
                   </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <StatusBadge
-                      tone={getContainerStateTone(container.state)}
-                      label={container.state}
-                    />
-                    <StatusBadge
-                      tone={getContainerHealthTone(container.health)}
-                      label={container.health}
-                    />
+                  <div className="mt-3 text-xs text-amber-100/60">
+                    {container.status}
+                  </div>
+                  <div className="mt-3 text-sm text-amber-100/70">
+                    Ports: {container.ports.length > 0 ? container.ports.join(", ") : "--"}
                   </div>
                 </div>
-                <div className="mt-3 text-xs text-amber-100/60">
-                  {container.status}
-                </div>
-                <div className="mt-3 text-sm text-amber-100/70">
-                  Ports: {container.ports.length > 0 ? container.ports.join(", ") : "�"}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </section>
@@ -258,33 +267,41 @@ export default function ServicesPage() {
           </div>
         ) : (
           <div className="space-y-3">
-            {units.map((unit) => (
-              <div
-                key={unit.name}
-                className="rounded-[24px] border border-orange-500/20 bg-[#120c08]/70 p-5"
-              >
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="text-xs uppercase tracking-[0.3em] text-amber-200/60">
-                      Unit
+            {units.map((unit) => {
+              const unitTone = getUnitTone(unit);
+              return (
+                <div
+                  key={unit.name}
+                  className="rounded-[24px] border border-orange-500/20 bg-[#120c08]/70 p-5"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-xs uppercase tracking-[0.3em] text-amber-200/60">
+                        Unit
+                      </div>
+                      <div className="truncate text-lg font-semibold text-amber-100">
+                        {unit.name}
+                      </div>
+                      <div className="text-xs text-amber-100/60">
+                        {unit.description}
+                      </div>
                     </div>
-                    <div className="truncate text-lg font-semibold text-amber-100">
-                      {unit.name}
-                    </div>
-                    <div className="text-xs text-amber-100/60">
-                      {unit.description}
+                    <div className="flex items-center gap-2">
+                      <IconHeart
+                        className={`h-7 w-7 ${toneClass(unitTone)}`}
+                        title={unit.activeState}
+                      />
+                      <span className="text-xs uppercase tracking-[0.3em] text-amber-200/60">
+                        {unit.subState}
+                      </span>
                     </div>
                   </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <StatusBadge tone={getUnitTone(unit)} label={unit.activeState} />
-                    <StatusBadge tone="slate" label={unit.subState} />
+                  <div className="mt-3 text-xs text-amber-100/60">
+                    Load: {unit.loadState}
                   </div>
                 </div>
-                <div className="mt-3 text-xs text-amber-100/60">
-                  Load: {unit.loadState}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </section>

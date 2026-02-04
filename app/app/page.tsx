@@ -34,18 +34,18 @@ function OverviewCard({ title, value, detail, href, error, icon }: OverviewCardP
     >
       <div className="flex items-center justify-between">
         <div>
-          <div className="text-xs uppercase tracking-[0.3em] text-amber-200/70">
+          <div className="text-[11px] uppercase tracking-[0.3em] text-amber-200/70">
             {title}
           </div>
           <div className="mt-3 text-2xl font-semibold text-amber-100">
             {value}
           </div>
         </div>
-        <div className="flex h-11 w-11 items-center justify-center rounded-full border border-orange-400/40 bg-orange-400/10 text-orange-100">
+        <div className="flex h-12 w-12 items-center justify-center rounded-full border border-orange-400/40 bg-orange-400/10 text-orange-100">
           {icon}
         </div>
       </div>
-      <div className="mt-3 text-sm text-amber-100/70">
+      <div className="mt-3 text-xs text-amber-100/70">
         {error ? error : detail}
       </div>
     </Link>
@@ -129,7 +129,7 @@ export default function PrivateDashboardPage() {
           <h2 className="font-[var(--font-display)] text-2xl text-amber-100">
             Private Overview
           </h2>
-          <p className="mt-2 text-sm text-amber-100/70">
+          <p className="mt-2 text-xs text-amber-100/70">
             Snapshot of services, files, and log sources.
           </p>
           <p className="mt-1 text-xs uppercase tracking-[0.3em] text-amber-200/60">
@@ -152,7 +152,7 @@ export default function PrivateDashboardPage() {
         <OverviewCard
           title="Docker"
           value={isLoading ? "Loading..." : String(containerSummary.total)}
-          detail={`${containerSummary.running} running � ${containerSummary.unhealthy} unhealthy`}
+          detail={`${containerSummary.running} running / ${containerSummary.unhealthy} unhealthy`}
           href="/app/services"
           error={errors.docker ?? null}
           icon={<IconServer className="h-5 w-5" />}

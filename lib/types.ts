@@ -93,6 +93,17 @@ export type FileRootsResponse = {
   roots: FileRootInfo[];
 };
 
+export type LogSourceInfo = {
+  id: string;
+  label: string;
+  type: "docker" | "systemd" | "file";
+};
+
+export type LogSourcesResponse = {
+  timestamp: string;
+  sources: LogSourceInfo[];
+};
+
 export type LogTailResponse = {
   timestamp: string;
   source: string;

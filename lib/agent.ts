@@ -7,6 +7,7 @@ const AGENT_PRIVATE_HEADER = (
   process.env.AGENT_PRIVATE_HEADER ?? "x-ajmsd-private"
 ).toLowerCase();
 const AGENT_PRIVATE_VALUE = process.env.AGENT_PRIVATE_VALUE ?? "1";
+const PRIVATE_PATH_PREFIXES = ["/docker", "/systemd", "/files", "/logs"] as const;
 
 export function getAgentBaseUrl(): string {
   const raw = process.env.AGENT_URL ?? DEFAULT_AGENT_URL;
@@ -45,6 +46,25 @@ export async function agentFetchJson<T>(
 ): Promise<AgentFetchSuccess<T> | AgentFetchFailure> {
   const baseUrl = getAgentBaseUrl();
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  const isPrivatePath = PRIVATE_PATH_PREFIXES.some((prefix) =>
+    normalizedPath.startsWith(prefix)
+  );
+
+  if (isPrivatePath && !options.private) {
+    return {
+      ok: false,
+      status: 400,
+      error: "Private agent endpoint requires authentication",
+    };
+  }
+
+  if (options.private && !AGENT_TOKEN) {
+    return {
+      ok: false,
+      status: 500,
+      error: "Agent token is not configured",
+    };
+  }
   const url = new URL(normalizedPath, baseUrl);
   const headers: Record<string, string> = {
     Accept: "application/json",

@@ -37,6 +37,20 @@ const LOG_DEFAULT_LINES = Number.isFinite(LOG_DEFAULT_LINES_RAW)
 const LOG_MAX_LINES = Number.isFinite(LOG_MAX_LINES_RAW)
   ? LOG_MAX_LINES_RAW
   : 500;
+const LOG_REDACT_KEYS = [
+  "AUTH_PASSWORD",
+  "AUTH_SECRET",
+  "AGENT_TOKEN",
+  "AGENT_PRIVATE_VALUE",
+] as const;
+const LOG_REDACT_MIN_LENGTH = 6;
+
+const LOG_REDACT_VALUES = LOG_REDACT_KEYS.flatMap((key) => {
+  const value = process.env[key];
+  if (!value) return [];
+  if (value.length < LOG_REDACT_MIN_LENGTH) return [];
+  return [value];
+}).sort((a, b) => b.length - a.length);
 
 if (process.env.AGENT_HOST && process.env.AGENT_HOST !== HOST) {
   console.warn("AGENT_HOST override ignored. Agent is bound to 127.0.0.1 only.");
@@ -606,11 +620,26 @@ function clampLines(value: number): number {
   return Math.min(value, max);
 }
 
+function redactLogContent(content: string): string {
+  if (!content || LOG_REDACT_VALUES.length === 0) {
+    return content;
+  }
+  let redacted = content;
+  for (const value of LOG_REDACT_VALUES) {
+    redacted = redacted.split(value).join("[redacted]");
+  }
+  return redacted;
+}
+
 function sanitizeRelativePath(raw: string | null): string | null {
   const value = raw?.trim() ?? "";
   if (!value) return "";
   if (value.startsWith("/") || value.startsWith("\\")) return null;
   if (WINDOWS_DRIVE_REGEX.test(value)) return null;
+  const parts = value.split(/[\\/]+/).filter(Boolean);
+  if (parts.some((segment) => segment === "..")) {
+    return null;
+  }
   return value;
 }
 
@@ -1311,6 +1340,21 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (url.pathname === "/logs/sources") {
+      const sources = logSources.map((source) => ({
+        id: source.id,
+        label: source.label,
+        type: source.type,
+      }));
+
+      sendJson(res, 200, {
+        timestamp: new Date().toISOString(),
+        sources,
+      });
+      logRequest(method, url.pathname, 200, startTime);
+      return;
+    }
+
     if (url.pathname === "/logs/tail") {
       const sourceId = url.searchParams.get("source");
       const source = getLogSource(sourceId);
@@ -1331,11 +1375,12 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
+      const content = redactLogContent(result.content);
       sendJson(res, 200, {
         timestamp: new Date().toISOString(),
         source: source.id,
         lines,
-        content: result.content,
+        content,
       });
       logRequest(method, url.pathname, 200, startTime);
       return;

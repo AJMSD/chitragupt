@@ -12,6 +12,7 @@ const HOST = "127.0.0.1";
 const PORT = Number.parseInt(process.env.AGENT_PORT ?? "7777", 10);
 const VERSION = "0.1.0";
 const DEBUG_DISKS = process.env.AGENT_DEBUG_DISKS === "1";
+const DISK_TYPE_OVERRIDE = process.env.DISK_TYPE_OVERRIDE ?? "";
 
 if (process.env.AGENT_HOST && process.env.AGENT_HOST !== HOST) {
   console.warn("AGENT_HOST override ignored. Agent is bound to 127.0.0.1 only.");
@@ -183,6 +184,20 @@ async function getDisks(): Promise<DiskInfo[]> {
   const disks: DiskInfo[] = [];
   const driveTypeCache = new Map<string, "ssd" | "hdd" | "unknown">();
   const sourceTypeCache = new Map<string, "ssd" | "hdd" | "unknown">();
+  const overrideMap = new Map<string, "ssd" | "hdd">();
+
+  const parseOverrides = () => {
+    for (const entry of DISK_TYPE_OVERRIDE.split(",")) {
+      const trimmed = entry.trim();
+      if (!trimmed) continue;
+      const [rawKey, rawValue] = trimmed.split("=").map((value) => value.trim());
+      if (!rawKey || !rawValue) continue;
+      if (rawValue !== "ssd" && rawValue !== "hdd") continue;
+      overrideMap.set(rawKey, rawValue);
+    }
+  };
+
+  parseOverrides();
 
   const getKernelName = async (source: string): Promise<string> => {
     try {
@@ -252,6 +267,51 @@ async function getDisks(): Promise<DiskInfo[]> {
     return null;
   };
 
+  const readDiscard = async (deviceName: string): Promise<number | null> => {
+    try {
+      const discardRaw = await fs.readFile(
+        `/sys/block/${deviceName}/queue/discard_max_bytes`,
+        "utf8"
+      );
+      const discard = Number.parseInt(discardRaw.trim(), 10);
+      return Number.isFinite(discard) ? discard : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const getDmSlaves = async (deviceName: string): Promise<string[]> => {
+    try {
+      const entries = await fs.readdir(
+        `/sys/class/block/${deviceName}/slaves`
+      );
+      return entries.filter(Boolean);
+    } catch {
+      return [];
+    }
+  };
+
+  const classifyLeaf = async (
+    deviceName: string
+  ): Promise<"ssd" | "hdd" | "unknown"> => {
+    const rota = await readRotational(deviceName);
+    const discard = await readDiscard(deviceName);
+
+    if (rota === 0) return "ssd";
+    if (rota === 1) {
+      if (discard !== null && discard > 0) {
+        return "ssd";
+      }
+      return "hdd";
+    }
+
+    if (discard !== null && discard > 0) {
+      return "ssd";
+    }
+
+    return "unknown";
+  };
+
   const getDriveType = async (
     source: string
   ): Promise<"ssd" | "hdd" | "unknown"> => {
@@ -275,24 +335,42 @@ async function getDisks(): Promise<DiskInfo[]> {
 
     for (const candidate of candidates) {
       if (!candidate) continue;
-      const rota = await readRotational(candidate);
-      if (rota === 0) {
-        sourceTypeCache.set(source, "ssd");
-        if (DEBUG_DISKS) {
-          console.log(
-            `[disks] ${source} kernel=${kernelName} parent=${parentName ?? "-"} -> ssd via ${candidate}`
-          );
+      if (candidate.startsWith("dm-")) {
+        const slaves = await getDmSlaves(candidate);
+        const leafTypes = await Promise.all(
+          slaves.map((slave) => classifyLeaf(baseDeviceName(slave)))
+        );
+        const hasHdd = leafTypes.includes("hdd");
+        const hasSsd = leafTypes.includes("ssd");
+        if (hasHdd) {
+          sourceTypeCache.set(source, "hdd");
+          if (DEBUG_DISKS) {
+            console.log(
+              `[disks] ${source} kernel=${kernelName} parent=${parentName ?? "-"} -> hdd via ${candidate} slaves=${slaves.join(",")}`
+            );
+          }
+          return "hdd";
         }
-        return "ssd";
-      }
-      if (rota === 1) {
-        sourceTypeCache.set(source, "hdd");
-        if (DEBUG_DISKS) {
-          console.log(
-            `[disks] ${source} kernel=${kernelName} parent=${parentName ?? "-"} -> hdd via ${candidate}`
-          );
+        if (hasSsd) {
+          sourceTypeCache.set(source, "ssd");
+          if (DEBUG_DISKS) {
+            console.log(
+              `[disks] ${source} kernel=${kernelName} parent=${parentName ?? "-"} -> ssd via ${candidate} slaves=${slaves.join(",")}`
+            );
+          }
+          return "ssd";
         }
-        return "hdd";
+      } else {
+        const leafType = await classifyLeaf(candidate);
+        if (leafType !== "unknown") {
+          sourceTypeCache.set(source, leafType);
+          if (DEBUG_DISKS) {
+            console.log(
+              `[disks] ${source} kernel=${kernelName} parent=${parentName ?? "-"} -> ${leafType} via ${candidate}`
+            );
+          }
+          return leafType;
+        }
       }
     }
 
@@ -318,7 +396,12 @@ async function getDisks(): Promise<DiskInfo[]> {
     const mountRaw = mountParts.join(" ");
     const mount = mountRaw.replace(/\\040/g, " ");
     const usedPercent = Number.parseFloat(capacity.replace("%", ""));
-    const driveType = await getDriveType(filesystem);
+    let driveType = await getDriveType(filesystem);
+    const mountOverride = overrideMap.get(mount);
+    const deviceOverride = overrideMap.get(filesystem);
+    if (mountOverride || deviceOverride) {
+      driveType = mountOverride ?? deviceOverride ?? driveType;
+    }
 
     disks.push({
       filesystem,

@@ -1,33 +1,33 @@
 {
-  "name": "ajmsd-ops",
-  "version": "0.1.0",
-  "private": true,
-  "scripts": {
-    "dev": "concurrently -k -n web,agent \"next dev\" \"tsx watch -r dotenv/config agent/src/server.ts\"",
-    "dev:web": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "eslint",
-    "agent:build": "tsc -p agent/tsconfig.json",
-    "agent:dev": "tsx watch -r dotenv/config agent/src/server.ts",
-    "agent:start": "node -r dotenv/config agent/dist/server.js"
-  },
-  "dependencies": {
-    "next": "16.1.5",
-    "react": "19.2.3",
-    "react-dom": "19.2.3"
-  },
-  "devDependencies": {
-    "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "concurrently": "^8.2.2",
-    "dotenv": "^16.4.5",
-    "eslint": "^9",
-    "eslint-config-next": "16.1.5",
-    "tailwindcss": "^4",
-    "tsx": "^4.19.2",
-    "typescript": "^5"
-  }
+    "name":  "ajmsd-ops",
+    "version":  "0.1.0",
+    "private":  true,
+    "scripts":  {
+                    "dev":  "concurrently -k -n web,agent \"next dev\" \"tsx watch -r dotenv/config agent/src/server.ts\"",
+                    "dev:web":  "next dev",
+                    "build":  "next build",
+                    "start":  "next start",
+                    "lint":  "eslint",
+                    "agent:build":  "tsc -p agent/tsconfig.json",
+                    "agent:dev":  "tsx watch -r dotenv/config agent/src/server.ts",
+                    "agent:start":  "node -r dotenv/config agent/dist/server.js"
+                },
+    "dependencies":  {
+                         "@tailwindcss/postcss":  "^4",
+                         "next":  "16.1.5",
+                         "react":  "19.2.3",
+                         "react-dom":  "19.2.3",
+                         "tailwindcss":  "^4"
+                     },
+    "devDependencies":  {
+                            "@types/node":  "^20",
+                            "@types/react":  "^19",
+                            "@types/react-dom":  "^19",
+                            "concurrently":  "^8.2.2",
+                            "dotenv":  "^16.4.5",
+                            "eslint":  "^9",
+                            "eslint-config-next":  "16.1.5",
+                            "tsx":  "^4.19.2",
+                            "typescript":  "^5"
+                        }
 }

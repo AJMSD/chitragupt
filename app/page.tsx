@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import { useEffect, useMemo, useState, useId } from "react";
+import Link from "next/link";
 import type { DiskInfo, DisksResponse, MetricsResponse } from "@/lib/types";
 
 const POLL_INTERVAL_MS = 5000;
@@ -208,6 +209,8 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [authLoaded, setAuthLoaded] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -248,6 +251,41 @@ export default function Home() {
     return () => {
       mounted = false;
       clearInterval(interval);
+    };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const fetchSession = async () => {
+      try {
+        const response = await fetch("/api/auth/session", {
+          cache: "no-store",
+        });
+        if (!response.ok) {
+          if (mounted) {
+            setIsAuthenticated(false);
+            setAuthLoaded(true);
+          }
+          return;
+        }
+        const payload = (await response.json()) as { authenticated?: boolean };
+        if (mounted) {
+          setIsAuthenticated(Boolean(payload.authenticated));
+          setAuthLoaded(true);
+        }
+      } catch {
+        if (mounted) {
+          setIsAuthenticated(false);
+          setAuthLoaded(true);
+        }
+      }
+    };
+
+    fetchSession();
+
+    return () => {
+      mounted = false;
     };
   }, []);
 
@@ -320,19 +358,28 @@ export default function Home() {
               Public metrics refresh every 5 seconds.
             </p>
           </div>
-          <div className="rounded-2xl border border-slate-800 bg-slate-900/70 px-5 py-4">
-            <div className="text-xs uppercase tracking-[0.3em] text-slate-500">
-              Health
-            </div>
-            <div
-              className={`mt-2 text-2xl font-semibold ${
-                health === "OK" ? "text-emerald-300" : "text-amber-300"
-              }`}
+          <div className="flex flex-wrap items-center gap-3">
+            <Link
+              className="rounded-full border border-amber-400/40 bg-amber-400/10 px-4 py-2 text-sm font-semibold text-amber-100 transition hover:border-amber-300/70 hover:bg-amber-400/20"
+              href={isAuthenticated ? "/app" : "/login?next=/app"}
+              aria-disabled={!authLoaded}
             >
-              {health}
-            </div>
-            <div className="mt-1 text-xs text-slate-500">
-              Last update {lastUpdatedLabel}
+              {authLoaded ? (isAuthenticated ? "Private" : "Login") : "Checking..."}
+            </Link>
+            <div className="rounded-2xl border border-slate-800 bg-slate-900/70 px-5 py-4">
+              <div className="text-xs uppercase tracking-[0.3em] text-slate-500">
+                Health
+              </div>
+              <div
+                className={`mt-2 text-2xl font-semibold ${
+                  health === "OK" ? "text-emerald-300" : "text-amber-300"
+                }`}
+              >
+                {health}
+              </div>
+              <div className="mt-1 text-xs text-slate-500">
+                Last update {lastUpdatedLabel}
+              </div>
             </div>
           </div>
         </header>

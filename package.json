@@ -4,6 +4,7 @@
     "private":  true,
     "scripts":  {
                     "dev":  "concurrently -k -n web,agent \"next dev\" \"tsx watch -r dotenv/config agent/src/server.ts\"",
+                    "dev:webpack":  "concurrently -k -n web,agent \"next dev --no-turbo\" \"tsx watch -r dotenv/config agent/src/server.ts\"",
                     "dev:web":  "next dev",
                     "build":  "next build",
                     "start":  "next start",

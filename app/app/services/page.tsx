@@ -1,4 +1,4 @@
-"use client";
+ï»¿"use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { IconRefresh } from "@/app/components/icons";
@@ -160,7 +160,7 @@ export default function ServicesPage() {
             {isLoading ? "Loading..." : containerSummary.total}
           </div>
           <div className="mt-2 text-sm text-amber-100/70">
-            {containerSummary.running} running · {containerSummary.unhealthy} unhealthy
+            {containerSummary.running} running ï¿½ {containerSummary.unhealthy} unhealthy
           </div>
         </div>
         <div className="rounded-[24px] border border-orange-500/20 bg-[#120c08]/70 p-5">
@@ -171,7 +171,7 @@ export default function ServicesPage() {
             {isLoading ? "Loading..." : unitSummary.total}
           </div>
           <div className="mt-2 text-sm text-amber-100/70">
-            {unitSummary.running} active · {unitSummary.failed} failed
+            {unitSummary.running} active ï¿½ {unitSummary.failed} failed
           </div>
         </div>
       </div>
@@ -229,7 +229,7 @@ export default function ServicesPage() {
                   {container.status}
                 </div>
                 <div className="mt-3 text-sm text-amber-100/70">
-                  Ports: {container.ports.length > 0 ? container.ports.join(", ") : "—"}
+                  Ports: {container.ports.length > 0 ? container.ports.join(", ") : "ï¿½"}
                 </div>
               </div>
             ))}

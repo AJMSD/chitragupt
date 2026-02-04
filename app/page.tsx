@@ -11,7 +11,7 @@ import {
 import type { DiskInfo, DisksResponse, MetricsResponse } from "@/lib/types";
 
 const POLL_INTERVAL_MS = 5000;
-const MAX_HISTORY = 10;
+const MAX_HISTORY = 30;
 const WARNING_THRESHOLDS = {
   cpu: 90,
   memory: 90,
@@ -197,6 +197,53 @@ function HeartRow({ ok, warn, error, sizeClass = "h-10 w-10" }: HeartRowProps) {
   );
 }
 
+type GpuCardProps = {
+  title: string;
+  name?: string | null;
+  utilization?: number | null;
+  temperature?: number | null;
+  accent?: "orange" | "amber";
+};
+
+function GpuCard({
+  title,
+  name,
+  utilization,
+  temperature,
+  accent = "orange",
+}: GpuCardProps) {
+  const percent = typeof utilization === "number" ? utilization : null;
+  const tempValue = typeof temperature === "number" ? temperature : null;
+  const stroke = accent === "amber" ? "#f59e0b" : "#fb923c";
+  const fill =
+    accent === "amber" ? "rgba(245,158,11,0.2)" : "rgba(251,146,60,0.18)";
+
+  return (
+    <div className="rounded-[24px] border border-orange-500/20 bg-[#120c08]/70 p-5">
+      <p className="text-xs uppercase tracking-[0.3em] text-amber-200/70">
+        {title}
+      </p>
+      <div className="mt-2 text-sm font-semibold text-amber-100">
+        {name ?? "Not detected"}
+      </div>
+      <div className="mt-3 text-2xl font-semibold text-amber-100">
+        {percent !== null ? `${percent.toFixed(0)}%` : "N/A"}
+      </div>
+      <div className="mt-1 text-xs text-amber-100/60">
+        {tempValue !== null ? `${tempValue.toFixed(0)}°C` : "Temp N/A"}
+      </div>
+      <div className="mt-4">
+        <LineChart
+          data={typeof percent === "number" ? [percent - 5, percent - 2, percent, percent + 2, percent] : [0, 0]}
+          height={90}
+          stroke={stroke}
+          fill={fill}
+        />
+      </div>
+    </div>
+  );
+}
+
 export default function Home() {
   const [metrics, setMetrics] = useState<MetricsResponse | null>(null);
   const [disks, setDisks] = useState<DiskInfo[]>([]);
@@ -350,7 +397,7 @@ export default function Home() {
 
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-10 px-6 py-10">
         <header className="flex flex-col gap-6 rounded-[32px] border border-orange-500/20 bg-[#120c08]/80 p-8 shadow-[0_20px_60px_rgba(14,8,4,0.65)] md:flex-row md:items-center md:justify-between motion-safe:animate-[fade-up_0.6s_ease-out]">
-          <div className="space-y-3">
+          <div className="space-y-2">
             <h1 className="font-[var(--font-display)] text-3xl font-semibold text-amber-100 md:text-4xl">
               AJMSD Ops
             </h1>
@@ -412,7 +459,7 @@ export default function Home() {
                 </h2>
               </div>
               <div className="text-[11px] uppercase tracking-[0.3em] text-amber-200/60">
-                10 segments (last minute)
+                30 segments (last 2.5 minutes)
               </div>
             </div>
             <div className="mt-6">
@@ -457,7 +504,7 @@ export default function Home() {
           </div>
         </section>
 
-        <section className="grid gap-4 lg:grid-cols-[1fr_2fr]">
+        <section className="grid gap-4 lg:grid-cols-[1fr_1fr]">
           <div className="rounded-[24px] border border-orange-500/20 bg-[#120c08]/70 p-5">
             <p className="text-xs uppercase tracking-[0.3em] text-amber-200/70">Storage</p>
             <div className="mt-2 text-2xl font-semibold text-amber-100">
@@ -476,54 +523,71 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="rounded-[28px] border border-orange-500/20 bg-[#120c08]/75 p-6">
-            <div className="flex items-center justify-between">
-              <h2 className="font-[var(--font-display)] text-2xl text-amber-100">Disk Terrain</h2>
-              <span className="text-[11px] uppercase tracking-[0.3em] text-amber-200/60">
-                Updated {lastUpdatedLabel}
-              </span>
-            </div>
+          <div className="grid gap-4">
+            <GpuCard
+              title="NVIDIA GPU"
+              name={metrics?.gpu?.name}
+              utilization={metrics?.gpu?.utilizationPercent ?? null}
+              temperature={metrics?.gpu?.temperatureC ?? null}
+              accent="orange"
+            />
+            <GpuCard
+              title="Intel GPU"
+              name={metrics?.gpuIntel?.name}
+              utilization={metrics?.gpuIntel?.utilizationPercent ?? null}
+              temperature={metrics?.gpuIntel?.temperatureC ?? null}
+              accent="amber"
+            />
+          </div>
+        </section>
 
-            {storageDisks.length === 0 ? (
-              <div className="mt-6 rounded-2xl border border-orange-500/20 bg-black/40 px-4 py-6 text-sm text-amber-100/70">
-                {isLoading ? "Loading disks..." : "No disks reported."}
-              </div>
-            ) : (
-              <div className="mt-6 grid gap-4 sm:grid-cols-2">
-                {storageDisks.map((disk) => (
-                  <div
-                    key={`${disk.filesystem}-${disk.mount}`}
-                    className="rounded-[20px] border border-orange-500/20 bg-black/40 p-4"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <div className="text-sm font-semibold text-amber-100">
-                          {getDiskLabel(disk.mount)}
-                        </div>
-                        <div className="text-[10px] uppercase tracking-[0.3em] text-amber-200/60">
-                          {(disk.driveType ?? "unknown") === "unknown"
-                            ? "Unknown"
-                            : disk.driveType.toUpperCase()}
-                        </div>
-                      </div>
+        <section className="rounded-[28px] border border-orange-500/20 bg-[#120c08]/75 p-6">
+          <div className="flex items-center justify-between">
+            <h2 className="font-[var(--font-display)] text-2xl text-amber-100">Disk Terrain</h2>
+            <span className="text-[11px] uppercase tracking-[0.3em] text-amber-200/60">
+              Updated {lastUpdatedLabel}
+            </span>
+          </div>
+
+          {storageDisks.length === 0 ? (
+            <div className="mt-6 rounded-2xl border border-orange-500/20 bg-black/40 px-4 py-6 text-sm text-amber-100/70">
+              {isLoading ? "Loading disks..." : "No disks reported."}
+            </div>
+          ) : (
+            <div className="mt-6 grid gap-4 sm:grid-cols-2">
+              {storageDisks.map((disk) => (
+                <div
+                  key={`${disk.filesystem}-${disk.mount}`}
+                  className="rounded-[20px] border border-orange-500/20 bg-black/40 p-4"
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
                       <div className="text-sm font-semibold text-amber-100">
-                        {disk.usedPercent.toFixed(1)}%
+                        {getDiskLabel(disk.mount)}
+                      </div>
+                      <div className="text-[10px] uppercase tracking-[0.3em] text-amber-200/60">
+                        {(disk.driveType ?? "unknown") === "unknown"
+                          ? "Unknown"
+                          : disk.driveType.toUpperCase()}
                       </div>
                     </div>
-                    <div className="mt-3 h-2 w-full rounded-full bg-black/40">
-                      <div
-                        className="h-2 rounded-full bg-gradient-to-r from-amber-300 via-orange-400 to-orange-600"
-                        style={{ width: `${disk.usedPercent}%` }}
-                      />
-                    </div>
-                    <div className="mt-3 text-xs text-amber-100/60">
-                      {formatBytes(disk.usedBytes)} / {formatBytes(disk.sizeBytes)}
+                    <div className="text-sm font-semibold text-amber-100">
+                      {disk.usedPercent.toFixed(1)}%
                     </div>
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
+                  <div className="mt-3 h-2 w-full rounded-full bg-black/40">
+                    <div
+                      className="h-2 rounded-full bg-gradient-to-r from-amber-300 via-orange-400 to-orange-600"
+                      style={{ width: `${disk.usedPercent}%` }}
+                    />
+                  </div>
+                  <div className="mt-3 text-xs text-amber-100/60">
+                    {formatBytes(disk.usedBytes)} / {formatBytes(disk.sizeBytes)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </section>
       </div>
     </div>

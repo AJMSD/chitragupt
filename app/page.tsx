@@ -390,7 +390,7 @@ export default function Home() {
           </div>
         ) : null}
 
-        <section className="grid gap-4 md:grid-cols-2 lg:grid-cols-2">
+        <section className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           <ComputeCard
             label="CPU"
             name={metrics?.cpu?.name ?? (isLoading ? "Loading..." : "Unknown")}
@@ -433,7 +433,28 @@ export default function Home() {
                 : "N/A"
             }
           />
-          <p className="text-xs text-slate-500 md:col-span-2">
+          <ComputeCard
+            label="Intel GPU"
+            name={
+              metrics?.gpuIntel?.name ??
+              (isLoading ? "Loading..." : "Not detected")
+            }
+            primaryLabel="Usage"
+            primaryValue={
+              metrics?.gpuIntel?.utilizationPercent !== null &&
+              metrics?.gpuIntel?.utilizationPercent !== undefined
+                ? `${metrics.gpuIntel.utilizationPercent.toFixed(0)}%`
+                : "N/A"
+            }
+            secondaryLabel="Temp"
+            secondaryValue={
+              metrics?.gpuIntel?.temperatureC !== null &&
+              metrics?.gpuIntel?.temperatureC !== undefined
+                ? `${metrics.gpuIntel.temperatureC.toFixed(0)}°C`
+                : "N/A"
+            }
+          />
+          <p className="text-xs text-slate-500 md:col-span-2 lg:col-span-3">
             Load averages reflect the number of runnable or uninterruptible
             processes over the last 1, 5, and 15 minutes.
           </p>

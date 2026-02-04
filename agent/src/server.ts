@@ -260,6 +260,45 @@ async function getGpuInfo(): Promise<GpuInfo> {
   return unknown;
 }
 
+async function getIntelGpuInfo(): Promise<GpuInfo | null> {
+  try {
+    const { stdout } = await execFileAsync("lspci", ["-mm"], { timeout: 2000 });
+    const lines = stdout.split(/\r?\n/).filter(Boolean);
+    const intelLine = lines.find((line) => {
+      if (!/\"(VGA compatible controller|3D controller|Display controller)\"/.test(line)) {
+        return false;
+      }
+      return /\"Intel/i.test(line);
+    });
+    if (!intelLine) return null;
+    const match = intelLine.match(
+      /\"(?:VGA compatible controller|3D controller|Display controller)\"\\s+\"([^\"]+)\"\\s+\"([^\"]+)\"/
+    );
+    if (match) {
+      const vendor = match[1].trim();
+      const device = match[2].trim();
+      return {
+        name: `${vendor} ${device}`.trim() || "Intel Graphics",
+        utilizationPercent: null,
+        temperatureC: null,
+        memoryTotalBytes: null,
+        memoryUsedBytes: null,
+        source: "lspci",
+      };
+    }
+    return {
+      name: "Intel Graphics",
+      utilizationPercent: null,
+      temperatureC: null,
+      memoryTotalBytes: null,
+      memoryUsedBytes: null,
+      source: "lspci",
+    };
+  } catch {}
+
+  return null;
+}
+
 async function getDisks(): Promise<DiskInfo[]> {
   let stdout = "";
 
@@ -1160,8 +1199,11 @@ const server = http.createServer(async (req, res) => {
       const memoryPercent =
         memoryTotal > 0 ? roundTo((memoryUsed / memoryTotal) * 100) : 0;
       const gpu = await getGpuInfo();
+      const intelGpu = await getIntelGpuInfo();
+      const hasIntelAlready =
+        gpu.source === "lspci" && gpu.name.toLowerCase().includes("intel");
 
-      sendJson(res, 200, {
+      const payload: Record<string, unknown> = {
         timestamp: new Date().toISOString(),
         hostname: os.hostname(),
         uptimeSeconds: Math.floor(os.uptime()),
@@ -1178,7 +1220,13 @@ const server = http.createServer(async (req, res) => {
           usedPercent: memoryPercent,
         },
         gpu,
-      });
+      };
+
+      if (intelGpu && !hasIntelAlready) {
+        payload.gpuIntel = intelGpu;
+      }
+
+      sendJson(res, 200, payload);
       logRequest(method, url.pathname, 200, startTime);
       return;
     }

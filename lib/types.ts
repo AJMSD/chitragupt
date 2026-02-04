@@ -22,6 +22,14 @@
     memoryUsedBytes: number | null;
     source: "nvidia-smi" | "lspci" | "unknown";
   };
+  gpuIntel?: {
+    name: string;
+    utilizationPercent: number | null;
+    temperatureC: number | null;
+    memoryTotalBytes: number | null;
+    memoryUsedBytes: number | null;
+    source: "nvidia-smi" | "lspci" | "unknown";
+  };
 };
 
 export type DiskInfo = {

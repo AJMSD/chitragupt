@@ -13,6 +13,14 @@ const PORT = Number.parseInt(process.env.AGENT_PORT ?? "7777", 10);
 const VERSION = "0.1.0";
 const DEBUG_DISKS = process.env.AGENT_DEBUG_DISKS === "1";
 const DISK_TYPE_OVERRIDE = process.env.DISK_TYPE_OVERRIDE ?? "";
+const AGENT_TOKEN = process.env.AGENT_TOKEN ?? "";
+const AGENT_TOKEN_HEADER = (
+  process.env.AGENT_TOKEN_HEADER ?? "x-agent-token"
+).toLowerCase();
+const AGENT_PRIVATE_HEADER = (
+  process.env.AGENT_PRIVATE_HEADER ?? "x-ajmsd-private"
+).toLowerCase();
+const AGENT_PRIVATE_VALUE = process.env.AGENT_PRIVATE_VALUE ?? "1";
 
 if (process.env.AGENT_HOST && process.env.AGENT_HOST !== HOST) {
   console.warn("AGENT_HOST override ignored. Agent is bound to 127.0.0.1 only.");
@@ -43,6 +51,18 @@ type GpuInfo = {
   memoryUsedBytes: number | null;
   source: "nvidia-smi" | "lspci" | "unknown";
 };
+
+type SystemdUnit = {
+  name: string;
+  loadState: string;
+  activeState: string;
+  subState: string;
+  description: string;
+};
+
+type SystemdResult =
+  | { ok: true; units: SystemdUnit[] }
+  | { ok: false; status: number; error: string };
 
 let lastCpuSnapshot: CpuSnapshot | null = null;
 
@@ -418,6 +438,85 @@ async function getDisks(): Promise<DiskInfo[]> {
   return disks;
 }
 
+function getHeaderValue(
+  req: http.IncomingMessage,
+  headerName: string
+): string | null {
+  const value = req.headers[headerName];
+  if (!value) return null;
+  if (Array.isArray(value)) return value[0] ?? null;
+  return value;
+}
+
+function isPrivatePath(pathname: string): boolean {
+  return (
+    pathname.startsWith("/docker") ||
+    pathname.startsWith("/systemd") ||
+    pathname.startsWith("/files") ||
+    pathname.startsWith("/logs")
+  );
+}
+
+function hasPrivateAccess(req: http.IncomingMessage): boolean {
+  if (!AGENT_TOKEN) return false;
+  const token = getHeaderValue(req, AGENT_TOKEN_HEADER);
+  const claim = getHeaderValue(req, AGENT_PRIVATE_HEADER);
+  if (!token || !claim) return false;
+  return token === AGENT_TOKEN && claim === AGENT_PRIVATE_VALUE;
+}
+
+async function getSystemdUnits(): Promise<SystemdResult> {
+  try {
+    const { stdout } = await execFileAsync(
+      "systemctl",
+      [
+        "list-units",
+        "--type=service",
+        "--state=running,failed",
+        "--no-legend",
+        "--no-pager",
+        "--all",
+      ],
+      { timeout: 4000 }
+    );
+
+    const units: SystemdUnit[] = [];
+    const lines = stdout.split(/\r?\n/).filter(Boolean);
+
+    for (const line of lines) {
+      const match = line.match(/^(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.*)$/);
+      if (!match) continue;
+      const [, name, loadState, activeState, subState, description] = match;
+      units.push({ name, loadState, activeState, subState, description });
+    }
+
+    return { ok: true, units };
+  } catch (error) {
+    const raw =
+      typeof error === "object" && error
+        ? String(
+            (error as { stderr?: string; message?: string }).stderr ??
+              (error as { message?: string }).message ??
+              ""
+          )
+        : "";
+    const lowered = raw.toLowerCase();
+
+    if (
+      lowered.includes("system has not been booted with systemd") ||
+      lowered.includes("failed to connect to bus")
+    ) {
+      return { ok: false, status: 503, error: "systemd unavailable" };
+    }
+
+    if (lowered.includes("access denied") || lowered.includes("permission")) {
+      return { ok: false, status: 403, error: "systemd access denied" };
+    }
+
+    return { ok: false, status: 500, error: "systemd error" };
+  }
+}
+
 function sendJson(
   res: http.ServerResponse,
   status: number,
@@ -455,6 +554,12 @@ const server = http.createServer(async (req, res) => {
     if (method !== "GET") {
       sendError(res, 405, "Method not allowed");
       logRequest(method, url.pathname, 405, startTime);
+      return;
+    }
+
+    if (isPrivatePath(url.pathname) && !hasPrivateAccess(req)) {
+      sendError(res, 401, "Unauthorized");
+      logRequest(method, url.pathname, 401, startTime);
       return;
     }
 
@@ -496,6 +601,22 @@ const server = http.createServer(async (req, res) => {
           usedPercent: memoryPercent,
         },
         gpu,
+      });
+      logRequest(method, url.pathname, 200, startTime);
+      return;
+    }
+
+    if (url.pathname === "/systemd/units") {
+      const result = await getSystemdUnits();
+      if (!result.ok) {
+        sendError(res, result.status, result.error);
+        logRequest(method, url.pathname, result.status, startTime);
+        return;
+      }
+
+      sendJson(res, 200, {
+        timestamp: new Date().toISOString(),
+        units: result.units,
       });
       logRequest(method, url.pathname, 200, startTime);
       return;

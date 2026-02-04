@@ -21,6 +21,8 @@ A self-hosted operations dashboard for Aman's Ubuntu server.
 - `GET /health`
 - `GET /metrics`
 - `GET /disks`
+- `GET /systemd/units` (private)
+  - Response: `{ timestamp, units: [{ name, loadState, activeState, subState, description }] }`
 
 ## Notes
 - The public dashboard polls every 5 seconds.

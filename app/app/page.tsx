@@ -1,4 +1,4 @@
-"use client";
+ï»¿"use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -152,7 +152,7 @@ export default function PrivateDashboardPage() {
         <OverviewCard
           title="Docker"
           value={isLoading ? "Loading..." : String(containerSummary.total)}
-          detail={`${containerSummary.running} running · ${containerSummary.unhealthy} unhealthy`}
+          detail={`${containerSummary.running} running ï¿½ ${containerSummary.unhealthy} unhealthy`}
           href="/app/services"
           error={errors.docker ?? null}
           icon={<IconServer className="h-5 w-5" />}

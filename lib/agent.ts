@@ -1,4 +1,4 @@
-﻿const DEFAULT_AGENT_URL = "http://127.0.0.1:7777";
+const DEFAULT_AGENT_URL = "http://127.0.0.1:7777";
 
 export function getAgentBaseUrl(): string {
   const raw = process.env.AGENT_URL ?? DEFAULT_AGENT_URL;
@@ -73,3 +73,4 @@ export async function agentFetchJson<T>(
 
   return lastError;
 }
+

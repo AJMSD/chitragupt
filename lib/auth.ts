@@ -205,3 +205,4 @@ export function isAuthConfigured(): boolean {
 }
 
 export { SESSION_COOKIE_NAME };
+export type { SessionPayload };

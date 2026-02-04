@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { IconRefresh } from "@/app/components/icons";
 import type {
   DockerContainerInfo,
   DockerContainersResponse,
@@ -16,14 +17,14 @@ function StatusBadge({ tone, label }: { tone: StatusTone; label: string }) {
     tone === "emerald"
       ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-100"
       : tone === "amber"
-      ? "border-amber-300/30 bg-amber-300/10 text-amber-100"
+      ? "border-orange-300/30 bg-orange-300/10 text-orange-100"
       : tone === "rose"
       ? "border-rose-400/30 bg-rose-400/10 text-rose-100"
       : "border-slate-700 bg-slate-900/70 text-slate-300";
 
   return (
     <span
-      className={`rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] ${toneClass}`}
+      className={`rounded-full border px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.3em] ${toneClass}`}
     >
       {label}
     </span>
@@ -122,61 +123,64 @@ export default function ServicesPage() {
     };
   }, [systemd]);
 
-  const updatedLabel = lastUpdated
-    ? lastUpdated.toLocaleTimeString()
-    : "--";
+  const updatedLabel = lastUpdated ? lastUpdated.toLocaleTimeString() : "--";
 
   return (
     <section className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-4 rounded-3xl border border-amber-200/10 bg-slate-900/70 p-6">
+      <div className="flex flex-wrap items-start justify-between gap-4 rounded-[28px] border border-orange-500/20 bg-[#120c08]/80 p-6">
         <div>
-          <h2 className="text-xl font-semibold">Services</h2>
-          <p className="mt-2 text-sm text-slate-400">
+          <h2 className="font-[var(--font-display)] text-2xl text-amber-100">
+            Services Pulse
+          </h2>
+          <p className="mt-2 text-sm text-amber-100/70">
             Live status for Docker containers and systemd units.
           </p>
-          <p className="mt-1 text-xs uppercase tracking-[0.3em] text-slate-500">
+          <p className="mt-1 text-xs uppercase tracking-[0.3em] text-amber-200/60">
             Updated {updatedLabel}
           </p>
         </div>
         <button
-          className="rounded-full border border-amber-400/40 bg-amber-400/10 px-4 py-2 text-sm font-semibold text-amber-100 transition hover:border-amber-300/70 hover:bg-amber-400/20"
+          className="flex h-11 w-11 items-center justify-center rounded-full border border-orange-400/40 bg-orange-400/10 text-orange-100 transition hover:border-orange-300 hover:bg-orange-400/20"
           type="button"
           onClick={() => void loadData(true)}
           disabled={isRefreshing}
+          aria-label="Refresh services"
+          title="Refresh services"
         >
-          {isRefreshing ? "Refreshing..." : "Refresh"}
+          <IconRefresh className="h-5 w-5" />
         </button>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
-          <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
+        <div className="rounded-[24px] border border-orange-500/20 bg-[#120c08]/70 p-5">
+          <div className="text-xs uppercase tracking-[0.3em] text-amber-200/70">
             Docker
           </div>
-          <div className="mt-3 text-2xl font-semibold text-slate-100">
+          <div className="mt-3 text-2xl font-semibold text-amber-100">
             {isLoading ? "Loading..." : containerSummary.total}
           </div>
-          <div className="mt-2 text-sm text-slate-400">
-            {containerSummary.running} running Â· {containerSummary.unhealthy}{" "}
-            unhealthy
+          <div className="mt-2 text-sm text-amber-100/70">
+            {containerSummary.running} running · {containerSummary.unhealthy} unhealthy
           </div>
         </div>
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5">
-          <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
+        <div className="rounded-[24px] border border-orange-500/20 bg-[#120c08]/70 p-5">
+          <div className="text-xs uppercase tracking-[0.3em] text-amber-200/70">
             systemd
           </div>
-          <div className="mt-3 text-2xl font-semibold text-slate-100">
+          <div className="mt-3 text-2xl font-semibold text-amber-100">
             {isLoading ? "Loading..." : unitSummary.total}
           </div>
-          <div className="mt-2 text-sm text-slate-400">
-            {unitSummary.running} active Â· {unitSummary.failed} failed
+          <div className="mt-2 text-sm text-amber-100/70">
+            {unitSummary.running} active · {unitSummary.failed} failed
           </div>
         </div>
       </div>
 
       <section className="space-y-4">
         <div className="flex items-center justify-between">
-          <h3 className="text-lg font-semibold">Docker Containers</h3>
+          <h3 className="font-[var(--font-display)] text-xl text-amber-100">
+            Docker Containers
+          </h3>
           {dockerError ? (
             <span className="text-xs uppercase tracking-[0.2em] text-rose-200">
               {dockerError}
@@ -188,7 +192,7 @@ export default function ServicesPage() {
             {dockerError}
           </div>
         ) : containers.length === 0 ? (
-          <div className="rounded-2xl border border-slate-800 bg-slate-900/60 px-4 py-6 text-sm text-slate-400">
+          <div className="rounded-2xl border border-orange-500/20 bg-[#120c08]/70 px-4 py-6 text-sm text-amber-100/70">
             {isLoading ? "Loading containers..." : "No containers reported."}
           </div>
         ) : (
@@ -196,17 +200,17 @@ export default function ServicesPage() {
             {containers.map((container) => (
               <div
                 key={container.id}
-                className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4"
+                className="rounded-[24px] border border-orange-500/20 bg-[#120c08]/70 p-5"
               >
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                    <div className="text-xs uppercase tracking-[0.3em] text-amber-200/60">
                       Container
                     </div>
-                    <div className="truncate text-lg font-semibold text-slate-100">
+                    <div className="truncate text-lg font-semibold text-amber-100">
                       {container.name}
                     </div>
-                    <div className="text-xs text-slate-500">
+                    <div className="text-xs text-amber-100/60">
                       {container.image}
                     </div>
                   </div>
@@ -221,14 +225,11 @@ export default function ServicesPage() {
                     />
                   </div>
                 </div>
-                <div className="mt-3 text-xs text-slate-500">
+                <div className="mt-3 text-xs text-amber-100/60">
                   {container.status}
                 </div>
-                <div className="mt-3 text-sm text-slate-300">
-                  Ports:{" "}
-                  {container.ports.length > 0
-                    ? container.ports.join(", ")
-                    : "â€”"}
+                <div className="mt-3 text-sm text-amber-100/70">
+                  Ports: {container.ports.length > 0 ? container.ports.join(", ") : "—"}
                 </div>
               </div>
             ))}
@@ -238,7 +239,9 @@ export default function ServicesPage() {
 
       <section className="space-y-4">
         <div className="flex items-center justify-between">
-          <h3 className="text-lg font-semibold">systemd Units</h3>
+          <h3 className="font-[var(--font-display)] text-xl text-amber-100">
+            systemd Units
+          </h3>
           {systemdError ? (
             <span className="text-xs uppercase tracking-[0.2em] text-rose-200">
               {systemdError}
@@ -250,7 +253,7 @@ export default function ServicesPage() {
             {systemdError}
           </div>
         ) : units.length === 0 ? (
-          <div className="rounded-2xl border border-slate-800 bg-slate-900/60 px-4 py-6 text-sm text-slate-400">
+          <div className="rounded-2xl border border-orange-500/20 bg-[#120c08]/70 px-4 py-6 text-sm text-amber-100/70">
             {isLoading ? "Loading units..." : "No systemd units reported."}
           </div>
         ) : (
@@ -258,17 +261,17 @@ export default function ServicesPage() {
             {units.map((unit) => (
               <div
                 key={unit.name}
-                className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4"
+                className="rounded-[24px] border border-orange-500/20 bg-[#120c08]/70 p-5"
               >
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
+                    <div className="text-xs uppercase tracking-[0.3em] text-amber-200/60">
                       Unit
                     </div>
-                    <div className="truncate text-lg font-semibold text-slate-100">
+                    <div className="truncate text-lg font-semibold text-amber-100">
                       {unit.name}
                     </div>
-                    <div className="text-xs text-slate-500">
+                    <div className="text-xs text-amber-100/60">
                       {unit.description}
                     </div>
                   </div>
@@ -277,7 +280,7 @@ export default function ServicesPage() {
                     <StatusBadge tone="slate" label={unit.subState} />
                   </div>
                 </div>
-                <div className="mt-3 text-xs text-slate-500">
+                <div className="mt-3 text-xs text-amber-100/60">
                   Load: {unit.loadState}
                 </div>
               </div>

@@ -1,6 +1,14 @@
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import Link from "next/link";
+import {
+  IconFolder,
+  IconGlobe,
+  IconGrid,
+  IconPower,
+  IconServer,
+  IconTerminal,
+} from "@/app/components/icons";
 import { SESSION_COOKIE_NAME, verifySessionToken } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
@@ -19,63 +27,85 @@ export default async function AppLayout({
   }
 
   return (
-    <div className="min-h-screen bg-[#050607] text-slate-100">
-      <div className="pointer-events-none fixed inset-0 -z-10 bg-[radial-gradient(circle_at_top_left,_rgba(251,191,36,0.2),_transparent_45%),_radial-gradient(circle_at_bottom_right,_rgba(16,185,129,0.2),_transparent_45%)]" />
+    <div className="min-h-screen bg-[#080503] text-slate-100">
+      <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
+        <div className="absolute -top-32 left-1/3 h-72 w-72 rounded-full bg-orange-500/25 blur-[140px]" />
+        <div className="absolute bottom-0 right-0 h-96 w-96 rounded-full bg-amber-300/20 blur-[140px]" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(251,146,60,0.18),_transparent_55%),radial-gradient(circle_at_bottom,_rgba(249,115,22,0.18),_transparent_60%)]" />
+      </div>
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 py-8">
-        <header className="flex flex-col gap-4 rounded-3xl border border-amber-200/10 bg-slate-900/70 p-6 md:flex-row md:items-center md:justify-between">
+        <header className="flex flex-col gap-4 rounded-[28px] border border-orange-500/20 bg-[#120c08]/80 p-6 md:flex-row md:items-center md:justify-between">
           <div className="space-y-2">
-            <p className="text-xs uppercase tracking-[0.35em] text-slate-500">
+            <p className="text-xs uppercase tracking-[0.4em] text-amber-200/70">
               ajmsd-ops
             </p>
-            <h1 className="text-2xl font-semibold tracking-tight">
-              Private Operations
+            <h1 className="font-[var(--font-display)] text-2xl text-amber-100">
+              Private Command Deck
             </h1>
-            <p className="text-sm text-slate-400">
-              Authenticated views for services, files, and logs.
+            <p className="text-sm text-amber-100/70">
+              Services, files, and logs in a single warm glow.
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-3 text-sm">
+          <div className="flex items-center gap-3">
             <Link
-              className="rounded-full border border-slate-800 px-4 py-2 text-slate-200 transition hover:border-amber-200/40 hover:text-amber-100"
+              className="flex h-11 w-11 items-center justify-center rounded-full border border-orange-400/40 bg-orange-400/10 text-orange-100 transition hover:border-orange-300 hover:bg-orange-400/20"
               href="/"
+              aria-label="Public overview"
+              title="Public overview"
             >
-              Public Overview
+              <IconGlobe className="h-5 w-5" />
+              <span className="sr-only">Public overview</span>
             </Link>
             <form action="/api/auth/logout" method="post">
               <button
-                className="rounded-full border border-amber-400/40 bg-amber-400/10 px-4 py-2 font-semibold text-amber-100 transition hover:border-amber-300/70 hover:bg-amber-400/20"
+                className="flex h-11 w-11 items-center justify-center rounded-full border border-orange-400/40 bg-orange-400/10 text-orange-100 transition hover:border-orange-300 hover:bg-orange-400/20"
                 type="submit"
+                aria-label="Sign out"
+                title="Sign out"
               >
-                Sign out
+                <IconPower className="h-5 w-5" />
+                <span className="sr-only">Sign out</span>
               </button>
             </form>
           </div>
         </header>
 
-        <nav className="flex flex-wrap gap-3 text-sm">
+        <nav className="flex flex-wrap gap-3">
           <Link
-            className="rounded-full border border-slate-800 bg-slate-900/60 px-4 py-2 text-slate-200 transition hover:border-amber-200/40 hover:text-amber-100"
+            className="flex h-12 w-12 items-center justify-center rounded-2xl border border-orange-500/20 bg-[#120c08]/70 text-amber-100 transition hover:border-orange-400/60 hover:bg-orange-400/10"
             href="/app"
+            aria-label="Dashboard"
+            title="Dashboard"
           >
-            Dashboard
+            <IconGrid className="h-5 w-5" />
+            <span className="sr-only">Dashboard</span>
           </Link>
           <Link
-            className="rounded-full border border-slate-800 bg-slate-900/60 px-4 py-2 text-slate-200 transition hover:border-amber-200/40 hover:text-amber-100"
+            className="flex h-12 w-12 items-center justify-center rounded-2xl border border-orange-500/20 bg-[#120c08]/70 text-amber-100 transition hover:border-orange-400/60 hover:bg-orange-400/10"
             href="/app/services"
+            aria-label="Services"
+            title="Services"
           >
-            Services
+            <IconServer className="h-5 w-5" />
+            <span className="sr-only">Services</span>
           </Link>
           <Link
-            className="rounded-full border border-slate-800 bg-slate-900/60 px-4 py-2 text-slate-200 transition hover:border-amber-200/40 hover:text-amber-100"
+            className="flex h-12 w-12 items-center justify-center rounded-2xl border border-orange-500/20 bg-[#120c08]/70 text-amber-100 transition hover:border-orange-400/60 hover:bg-orange-400/10"
             href="/app/files"
+            aria-label="Files"
+            title="Files"
           >
-            Files
+            <IconFolder className="h-5 w-5" />
+            <span className="sr-only">Files</span>
           </Link>
           <Link
-            className="rounded-full border border-slate-800 bg-slate-900/60 px-4 py-2 text-slate-200 transition hover:border-amber-200/40 hover:text-amber-100"
+            className="flex h-12 w-12 items-center justify-center rounded-2xl border border-orange-500/20 bg-[#120c08]/70 text-amber-100 transition hover:border-orange-400/60 hover:bg-orange-400/10"
             href="/app/logs"
+            aria-label="Logs"
+            title="Logs"
           >
-            Logs
+            <IconTerminal className="h-5 w-5" />
+            <span className="sr-only">Logs</span>
           </Link>
         </nav>
 

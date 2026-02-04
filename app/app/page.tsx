@@ -2,6 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import {
+  IconFolder,
+  IconGrid,
+  IconRefresh,
+  IconServer,
+  IconTerminal,
+} from "@/app/components/icons";
 import type {
   DockerContainersResponse,
   FileRootsResponse,
@@ -16,19 +23,29 @@ type OverviewCardProps = {
   detail: string;
   href: string;
   error?: string | null;
+  icon: React.ReactNode;
 };
 
-function OverviewCard({ title, value, detail, href, error }: OverviewCardProps) {
+function OverviewCard({ title, value, detail, href, error, icon }: OverviewCardProps) {
   return (
     <Link
       href={href}
-      className="rounded-2xl border border-slate-800 bg-slate-900/60 p-5 transition hover:border-amber-200/30"
+      className="group rounded-[24px] border border-orange-500/20 bg-[#120c08]/70 p-5 shadow-[0_10px_30px_rgba(10,6,4,0.6)] transition hover:border-orange-400/60 hover:bg-orange-400/10"
     >
-      <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
-        {title}
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="text-xs uppercase tracking-[0.3em] text-amber-200/70">
+            {title}
+          </div>
+          <div className="mt-3 text-2xl font-semibold text-amber-100">
+            {value}
+          </div>
+        </div>
+        <div className="flex h-11 w-11 items-center justify-center rounded-full border border-orange-400/40 bg-orange-400/10 text-orange-100">
+          {icon}
+        </div>
       </div>
-      <div className="mt-3 text-2xl font-semibold text-slate-100">{value}</div>
-      <div className="mt-2 text-sm text-slate-400">
+      <div className="mt-3 text-sm text-amber-100/70">
         {error ? error : detail}
       </div>
     </Link>
@@ -93,9 +110,7 @@ export default function PrivateDashboardPage() {
   const containerSummary = useMemo(() => {
     const containers = docker?.containers ?? [];
     const running = containers.filter((item) => item.state === "running").length;
-    const unhealthy = containers.filter(
-      (item) => item.health === "unhealthy"
-    ).length;
+    const unhealthy = containers.filter((item) => item.health === "unhealthy").length;
     return { total: containers.length, running, unhealthy };
   }, [docker]);
 
@@ -105,29 +120,31 @@ export default function PrivateDashboardPage() {
     return { total: units.length, failed };
   }, [systemd]);
 
-  const updatedLabel = lastUpdated
-    ? lastUpdated.toLocaleTimeString()
-    : "--";
+  const updatedLabel = lastUpdated ? lastUpdated.toLocaleTimeString() : "--";
 
   return (
     <section className="space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-4 rounded-3xl border border-amber-200/10 bg-slate-900/70 p-6">
+      <div className="flex flex-wrap items-start justify-between gap-4 rounded-[28px] border border-orange-500/20 bg-[#120c08]/80 p-6">
         <div>
-          <h2 className="text-xl font-semibold">Dashboard Overview</h2>
-          <p className="mt-2 text-sm text-slate-400">
-            Snapshot of private services, files, and log sources.
+          <h2 className="font-[var(--font-display)] text-2xl text-amber-100">
+            Private Overview
+          </h2>
+          <p className="mt-2 text-sm text-amber-100/70">
+            Snapshot of services, files, and log sources.
           </p>
-          <p className="mt-1 text-xs uppercase tracking-[0.3em] text-slate-500">
+          <p className="mt-1 text-xs uppercase tracking-[0.3em] text-amber-200/60">
             Updated {updatedLabel}
           </p>
         </div>
         <button
-          className="rounded-full border border-amber-400/40 bg-amber-400/10 px-4 py-2 text-sm font-semibold text-amber-100 transition hover:border-amber-300/70 hover:bg-amber-400/20"
+          className="flex h-11 w-11 items-center justify-center rounded-full border border-orange-400/40 bg-orange-400/10 text-orange-100 transition hover:border-orange-300 hover:bg-orange-400/20"
           type="button"
           onClick={() => void loadOverview()}
           disabled={isLoading}
+          aria-label="Refresh overview"
+          title="Refresh overview"
         >
-          {isLoading ? "Loading..." : "Refresh"}
+          <IconRefresh className="h-5 w-5" />
         </button>
       </div>
 
@@ -135,9 +152,10 @@ export default function PrivateDashboardPage() {
         <OverviewCard
           title="Docker"
           value={isLoading ? "Loading..." : String(containerSummary.total)}
-          detail={`${containerSummary.running} running Â· ${containerSummary.unhealthy} unhealthy`}
+          detail={`${containerSummary.running} running · ${containerSummary.unhealthy} unhealthy`}
           href="/app/services"
           error={errors.docker ?? null}
+          icon={<IconServer className="h-5 w-5" />}
         />
         <OverviewCard
           title="systemd"
@@ -145,6 +163,7 @@ export default function PrivateDashboardPage() {
           detail={`${unitSummary.failed} failed`}
           href="/app/services"
           error={errors.systemd ?? null}
+          icon={<IconGrid className="h-5 w-5" />}
         />
         <OverviewCard
           title="Files"
@@ -152,6 +171,7 @@ export default function PrivateDashboardPage() {
           detail="Allowlisted roots available"
           href="/app/files"
           error={errors.files ?? null}
+          icon={<IconFolder className="h-5 w-5" />}
         />
         <OverviewCard
           title="Logs"
@@ -159,6 +179,7 @@ export default function PrivateDashboardPage() {
           detail="Configured log sources"
           href="/app/logs"
           error={errors.logs ?? null}
+          icon={<IconTerminal className="h-5 w-5" />}
         />
       </div>
     </section>

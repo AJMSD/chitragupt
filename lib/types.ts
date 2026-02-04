@@ -82,6 +82,17 @@ export type FileListResponse = {
   entries: FileEntry[];
 };
 
+export type FileRootInfo = {
+  id: string;
+  label: string;
+  path: string;
+};
+
+export type FileRootsResponse = {
+  timestamp: string;
+  roots: FileRootInfo[];
+};
+
 export type LogTailResponse = {
   timestamp: string;
   source: string;

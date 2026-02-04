@@ -107,6 +107,12 @@ type FileEntry = {
   modifiedMs: number | null;
 };
 
+type AllowlistRootResponse = {
+  id: string;
+  label: string;
+  path: string;
+};
+
 type LogSource = {
   id: string;
   label: string;
@@ -1227,6 +1233,21 @@ const server = http.createServer(async (req, res) => {
         root: resolved.root.id,
         path: relativePath ?? "",
         entries,
+      });
+      logRequest(method, url.pathname, 200, startTime);
+      return;
+    }
+
+    if (url.pathname === "/files/roots") {
+      const roots: AllowlistRootResponse[] = allowlistRoots.map((root) => ({
+        id: root.id,
+        label: root.label,
+        path: root.path,
+      }));
+
+      sendJson(res, 200, {
+        timestamp: new Date().toISOString(),
+        roots,
       });
       logRequest(method, url.pathname, 200, startTime);
       return;

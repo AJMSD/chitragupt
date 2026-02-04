@@ -27,6 +27,8 @@ A self-hosted operations dashboard for Aman's Ubuntu server.
   - Response: `{ timestamp, units: [{ name, loadState, activeState, subState, description }] }`
 - `GET /files/list?root=<id>&path=<relative>` (private)
   - Response: `{ timestamp, root, path, entries: [{ name, type, sizeBytes, modifiedMs }] }`
+- `GET /files/roots` (private)
+  - Response: `{ timestamp, roots: [{ id, label, path }] }`
 - `GET /files/download?root=<id>&path=<relative>` (private)
 - `GET /logs/tail?source=<id>&lines=200` (private)
   - Response: `{ timestamp, source, lines, content }`

@@ -39,3 +39,31 @@ export type DisksResponse = {
   timestamp: string;
   disks: DiskInfo[];
 };
+
+export type DockerContainerInfo = {
+  id: string;
+  name: string;
+  image: string;
+  status: string;
+  state: "running" | "exited" | "paused" | "restarting" | "created" | "dead" | "unknown";
+  health: "healthy" | "unhealthy" | "starting" | "none" | "unknown";
+  ports: string[];
+};
+
+export type DockerContainersResponse = {
+  timestamp: string;
+  containers: DockerContainerInfo[];
+};
+
+export type SystemdUnitInfo = {
+  name: string;
+  loadState: string;
+  activeState: string;
+  subState: string;
+  description: string;
+};
+
+export type SystemdUnitsResponse = {
+  timestamp: string;
+  units: SystemdUnitInfo[];
+};

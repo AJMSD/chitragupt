@@ -21,6 +21,8 @@ A self-hosted operations dashboard for Aman's Ubuntu server.
 - `GET /health`
 - `GET /metrics`
 - `GET /disks`
+- `GET /docker/containers` (private)
+  - Response: `{ timestamp, containers: [{ id, name, image, status, state, health, ports }] }`
 - `GET /systemd/units` (private)
   - Response: `{ timestamp, units: [{ name, loadState, activeState, subState, description }] }`
 

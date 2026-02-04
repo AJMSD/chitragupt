@@ -1,4 +1,12 @@
 const DEFAULT_AGENT_URL = "http://127.0.0.1:7777";
+const AGENT_TOKEN = process.env.AGENT_TOKEN ?? "";
+const AGENT_TOKEN_HEADER = (
+  process.env.AGENT_TOKEN_HEADER ?? "x-agent-token"
+).toLowerCase();
+const AGENT_PRIVATE_HEADER = (
+  process.env.AGENT_PRIVATE_HEADER ?? "x-ajmsd-private"
+).toLowerCase();
+const AGENT_PRIVATE_VALUE = process.env.AGENT_PRIVATE_VALUE ?? "1";
 
 export function getAgentBaseUrl(): string {
   const raw = process.env.AGENT_URL ?? DEFAULT_AGENT_URL;
@@ -17,21 +25,40 @@ type AgentFetchFailure = {
   error: string;
 };
 
+type AgentFetchOptions = {
+  private?: boolean;
+  headers?: Record<string, string>;
+  timeoutMs?: number;
+};
+
+export function getPrivateAgentHeaders(): Record<string, string> {
+  if (!AGENT_TOKEN) return {};
+  return {
+    [AGENT_TOKEN_HEADER]: AGENT_TOKEN,
+    [AGENT_PRIVATE_HEADER]: AGENT_PRIVATE_VALUE,
+  };
+}
+
 export async function agentFetchJson<T>(
-  path: string
+  path: string,
+  options: AgentFetchOptions = {}
 ): Promise<AgentFetchSuccess<T> | AgentFetchFailure> {
   const baseUrl = getAgentBaseUrl();
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   const url = new URL(normalizedPath, baseUrl);
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    ...(options.private ? getPrivateAgentHeaders() : {}),
+    ...(options.headers ?? {}),
+  };
+  const timeoutMs = options.timeoutMs ?? 4000;
 
   const fetchOnce = async (): Promise<AgentFetchSuccess<T> | AgentFetchFailure> => {
     try {
       const response = await fetch(url, {
         cache: "no-store",
-        signal: AbortSignal.timeout(4000),
-        headers: {
-          Accept: "application/json",
-        },
+        signal: AbortSignal.timeout(timeoutMs),
+        headers,
       });
 
       const contentType = response.headers.get("content-type") ?? "";

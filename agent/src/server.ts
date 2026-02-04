@@ -52,6 +52,20 @@ type GpuInfo = {
   source: "nvidia-smi" | "lspci" | "unknown";
 };
 
+type DockerContainer = {
+  id: string;
+  name: string;
+  image: string;
+  status: string;
+  state: "running" | "exited" | "paused" | "restarting" | "created" | "dead" | "unknown";
+  health: "healthy" | "unhealthy" | "starting" | "none" | "unknown";
+  ports: string[];
+};
+
+type DockerResult =
+  | { ok: true; containers: DockerContainer[] }
+  | { ok: false; status: number; error: string };
+
 type SystemdUnit = {
   name: string;
   loadState: string;
@@ -465,6 +479,113 @@ function hasPrivateAccess(req: http.IncomingMessage): boolean {
   return token === AGENT_TOKEN && claim === AGENT_PRIVATE_VALUE;
 }
 
+function parseDockerStatus(statusText: string): {
+  state: DockerContainer["state"];
+  health: DockerContainer["health"];
+} {
+  const lowered = statusText.toLowerCase();
+  let state: DockerContainer["state"] = "unknown";
+
+  if (lowered.startsWith("up")) {
+    state = "running";
+  } else if (lowered.startsWith("exited")) {
+    state = "exited";
+  } else if (lowered.startsWith("restarting")) {
+    state = "restarting";
+  } else if (lowered.startsWith("paused")) {
+    state = "paused";
+  } else if (lowered.startsWith("created")) {
+    state = "created";
+  } else if (lowered.startsWith("dead")) {
+    state = "dead";
+  }
+
+  let health: DockerContainer["health"] = "none";
+  if (lowered.includes("(healthy)")) {
+    health = "healthy";
+  } else if (lowered.includes("(unhealthy)")) {
+    health = "unhealthy";
+  } else if (lowered.includes("(starting)")) {
+    health = "starting";
+  } else if (lowered.includes("(health:")) {
+    health = "unknown";
+  }
+
+  return { state, health };
+}
+
+async function getDockerContainers(): Promise<DockerResult> {
+  try {
+    const { stdout } = await execFileAsync(
+      "docker",
+      [
+        "ps",
+        "--all",
+        "--no-trunc",
+        "--format",
+        "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}",
+      ],
+      { timeout: 4000 }
+    );
+
+    const containers: DockerContainer[] = [];
+    const lines = stdout.split(/\r?\n/).filter(Boolean);
+
+    for (const line of lines) {
+      const [id, name, image, statusText, portsText = ""] = line.split("\t");
+      if (!id || !name) continue;
+      const { state, health } = parseDockerStatus(statusText ?? "");
+      const ports = portsText
+        ? portsText.split(",").map((entry) => entry.trim()).filter(Boolean)
+        : [];
+
+      containers.push({
+        id,
+        name,
+        image: image ?? "",
+        status: statusText ?? "",
+        state,
+        health,
+        ports,
+      });
+    }
+
+    return { ok: true, containers };
+  } catch (error) {
+    const rawMessage =
+      typeof error === "object" && error
+        ? String(
+            (error as { stderr?: string; message?: string }).stderr ??
+              (error as { message?: string }).message ??
+              ""
+          )
+        : "";
+
+    const lowered = rawMessage.toLowerCase();
+    if (
+      lowered.includes("cannot connect to the docker daemon") ||
+      lowered.includes("is the docker daemon running") ||
+      lowered.includes("error during connect")
+    ) {
+      return { ok: false, status: 503, error: "docker unavailable" };
+    }
+
+    if (lowered.includes("permission denied")) {
+      return { ok: false, status: 403, error: "docker access denied" };
+    }
+
+    if (
+      lowered.includes("not found") ||
+      lowered.includes("executable file not found") ||
+      lowered.includes("enoent")
+    ) {
+      return { ok: false, status: 503, error: "docker unavailable" };
+    }
+
+    return { ok: false, status: 500, error: "docker error" };
+  }
+}
+
 async function getSystemdUnits(): Promise<SystemdResult> {
   try {
     const { stdout } = await execFileAsync(
@@ -601,6 +722,22 @@ const server = http.createServer(async (req, res) => {
           usedPercent: memoryPercent,
         },
         gpu,
+      });
+      logRequest(method, url.pathname, 200, startTime);
+      return;
+    }
+
+    if (url.pathname === "/docker/containers") {
+      const result = await getDockerContainers();
+      if (!result.ok) {
+        sendError(res, result.status, result.error);
+        logRequest(method, url.pathname, result.status, startTime);
+        return;
+      }
+
+      sendJson(res, 200, {
+        timestamp: new Date().toISOString(),
+        containers: result.containers,
       });
       logRequest(method, url.pathname, 200, startTime);
       return;

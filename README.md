@@ -25,6 +25,16 @@ A self-hosted operations dashboard for Aman's Ubuntu server.
   - Response: `{ timestamp, containers: [{ id, name, image, status, state, health, ports }] }`
 - `GET /systemd/units` (private)
   - Response: `{ timestamp, units: [{ name, loadState, activeState, subState, description }] }`
+- `GET /files/list?root=<id>&path=<relative>` (private)
+  - Response: `{ timestamp, root, path, entries: [{ name, type, sizeBytes, modifiedMs }] }`
+- `GET /files/download?root=<id>&path=<relative>` (private)
+- `GET /logs/tail?source=<id>&lines=200` (private)
+  - Response: `{ timestamp, source, lines, content }`
+
+## File Browser & Logs Config
+- `ALLOWLIST_ROOTS` defines which folders are browsable/downloadable (JSON array).
+- `LOG_SOURCES` defines log sources (docker, systemd, or file).
+- See `.env.example` for sample values.
 
 ## Notes
 - The public dashboard polls every 5 seconds.

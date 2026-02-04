@@ -2,7 +2,7 @@
 import http from "node:http";
 import os from "node:os";
 import { execFile } from "node:child_process";
-import { promises as fs } from "node:fs";
+import { createReadStream, promises as fs } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
 
@@ -21,6 +21,22 @@ const AGENT_PRIVATE_HEADER = (
   process.env.AGENT_PRIVATE_HEADER ?? "x-ajmsd-private"
 ).toLowerCase();
 const AGENT_PRIVATE_VALUE = process.env.AGENT_PRIVATE_VALUE ?? "1";
+const ALLOWLIST_ROOTS_RAW = process.env.ALLOWLIST_ROOTS ?? "[]";
+const LOG_SOURCES_RAW = process.env.LOG_SOURCES ?? "[]";
+const LOG_DEFAULT_LINES_RAW = Number.parseInt(
+  process.env.LOG_DEFAULT_LINES ?? "200",
+  10
+);
+const LOG_MAX_LINES_RAW = Number.parseInt(
+  process.env.LOG_MAX_LINES ?? "500",
+  10
+);
+const LOG_DEFAULT_LINES = Number.isFinite(LOG_DEFAULT_LINES_RAW)
+  ? LOG_DEFAULT_LINES_RAW
+  : 200;
+const LOG_MAX_LINES = Number.isFinite(LOG_MAX_LINES_RAW)
+  ? LOG_MAX_LINES_RAW
+  : 500;
 
 if (process.env.AGENT_HOST && process.env.AGENT_HOST !== HOST) {
   console.warn("AGENT_HOST override ignored. Agent is bound to 127.0.0.1 only.");
@@ -76,6 +92,30 @@ type SystemdUnit = {
 
 type SystemdResult =
   | { ok: true; units: SystemdUnit[] }
+  | { ok: false; status: number; error: string };
+
+type AllowlistRoot = {
+  id: string;
+  path: string;
+  label: string;
+};
+
+type FileEntry = {
+  name: string;
+  type: "file" | "dir" | "other";
+  sizeBytes: number | null;
+  modifiedMs: number | null;
+};
+
+type LogSource = {
+  id: string;
+  label: string;
+  type: "docker" | "systemd" | "file";
+  target: string;
+};
+
+type LogResult =
+  | { ok: true; content: string }
   | { ok: false; status: number; error: string };
 
 let lastCpuSnapshot: CpuSnapshot | null = null;
@@ -452,6 +492,211 @@ async function getDisks(): Promise<DiskInfo[]> {
   return disks;
 }
 
+const WINDOWS_DRIVE_REGEX = /^[A-Za-z]:[\\/]/;
+
+function isWindowsPath(value: string): boolean {
+  return WINDOWS_DRIVE_REGEX.test(value);
+}
+
+function getPathModule(rootPath: string) {
+  return isWindowsPath(rootPath) ? path.win32 : path.posix;
+}
+
+function parseAllowlistRoots(raw: string): AllowlistRoot[] {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (Array.isArray(parsed)) {
+      return parsed
+        .map((entry) => {
+          if (
+            !entry ||
+            typeof entry !== "object" ||
+            typeof (entry as AllowlistRoot).id !== "string" ||
+            typeof (entry as AllowlistRoot).path !== "string"
+          ) {
+            return null;
+          }
+          const id = (entry as AllowlistRoot).id.trim();
+          const filePath = (entry as AllowlistRoot).path.trim();
+          if (!id || !filePath) return null;
+          const label =
+            typeof (entry as AllowlistRoot).label === "string" &&
+            (entry as AllowlistRoot).label.trim().length > 0
+              ? (entry as AllowlistRoot).label.trim()
+              : id;
+          return { id, path: filePath, label };
+        })
+        .filter((entry): entry is AllowlistRoot => Boolean(entry));
+    }
+
+    if (parsed && typeof parsed === "object") {
+      return Object.entries(parsed as Record<string, string>)
+        .map(([id, filePath]) => {
+          if (typeof filePath !== "string") return null;
+          const trimmedId = id.trim();
+          const trimmedPath = filePath.trim();
+          if (!trimmedId || !trimmedPath) return null;
+          return { id: trimmedId, path: trimmedPath, label: trimmedId };
+        })
+        .filter((entry): entry is AllowlistRoot => Boolean(entry));
+    }
+  } catch (error) {
+    console.warn("Failed to parse ALLOWLIST_ROOTS", error);
+  }
+
+  return [];
+}
+
+function parseLogSources(raw: string): LogSource[] {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (Array.isArray(parsed)) {
+      return parsed
+        .map((entry) => {
+          if (
+            !entry ||
+            typeof entry !== "object" ||
+            typeof (entry as LogSource).id !== "string" ||
+            typeof (entry as LogSource).target !== "string" ||
+            typeof (entry as LogSource).type !== "string"
+          ) {
+            return null;
+          }
+          const id = (entry as LogSource).id.trim();
+          const target = (entry as LogSource).target.trim();
+          const type = (entry as LogSource).type as LogSource["type"];
+          if (!id || !target) return null;
+          if (type !== "docker" && type !== "systemd" && type !== "file") {
+            return null;
+          }
+          const label =
+            typeof (entry as LogSource).label === "string" &&
+            (entry as LogSource).label.trim().length > 0
+              ? (entry as LogSource).label.trim()
+              : id;
+          return { id, label, type, target };
+        })
+        .filter((entry): entry is LogSource => Boolean(entry));
+    }
+  } catch (error) {
+    console.warn("Failed to parse LOG_SOURCES", error);
+  }
+
+  return [];
+}
+
+const allowlistRoots = parseAllowlistRoots(ALLOWLIST_ROOTS_RAW);
+const allowlistMap = new Map(
+  allowlistRoots.map((root) => [root.id, root])
+);
+const logSources = parseLogSources(LOG_SOURCES_RAW);
+const logSourceMap = new Map(logSources.map((source) => [source.id, source]));
+
+function clampLines(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    return LOG_DEFAULT_LINES;
+  }
+  const max = Number.isFinite(LOG_MAX_LINES) ? LOG_MAX_LINES : 500;
+  return Math.min(value, max);
+}
+
+function sanitizeRelativePath(raw: string | null): string | null {
+  const value = raw?.trim() ?? "";
+  if (!value) return "";
+  if (value.startsWith("/") || value.startsWith("\\")) return null;
+  if (WINDOWS_DRIVE_REGEX.test(value)) return null;
+  return value;
+}
+
+function isWithinRoot(
+  rootPath: string,
+  candidatePath: string,
+  pathModule: typeof path.posix | typeof path.win32
+): boolean {
+  const needsCaseFold = isWindowsPath(rootPath);
+  const rootNormalized = rootPath.endsWith(pathModule.sep)
+    ? rootPath.slice(0, -1)
+    : rootPath;
+  const rootCompare = needsCaseFold
+    ? rootNormalized.toLowerCase()
+    : rootNormalized;
+  const candidateCompare = needsCaseFold
+    ? candidatePath.toLowerCase()
+    : candidatePath;
+  return (
+    candidateCompare === rootCompare ||
+    candidateCompare.startsWith(rootCompare + pathModule.sep)
+  );
+}
+
+async function resolveAllowlistPath(
+  rootId: string | null,
+  relativePath: string | null
+): Promise<
+  | {
+      ok: true;
+      root: AllowlistRoot;
+      rootPath: string;
+      resolvedPath: string;
+      pathModule: typeof path.posix | typeof path.win32;
+    }
+  | { ok: false; status: number; error: string }
+> {
+  if (!rootId) {
+    return { ok: false, status: 400, error: "Missing root" };
+  }
+
+  const root = allowlistMap.get(rootId);
+  if (!root) {
+    return { ok: false, status: 404, error: "Unknown root" };
+  }
+
+  const pathModule = getPathModule(root.path);
+  const rootResolved = pathModule.resolve(root.path);
+  if (!pathModule.isAbsolute(rootResolved)) {
+    return { ok: false, status: 500, error: "Invalid allowlist root" };
+  }
+
+  const safeRelative = sanitizeRelativePath(relativePath);
+  if (safeRelative === null) {
+    return { ok: false, status: 400, error: "Invalid path" };
+  }
+
+  const candidatePath = pathModule.resolve(rootResolved, safeRelative);
+  if (!isWithinRoot(rootResolved, candidatePath, pathModule)) {
+    return { ok: false, status: 403, error: "Path outside allowlist" };
+  }
+
+  return {
+    ok: true,
+    root,
+    rootPath: rootResolved,
+    resolvedPath: candidatePath,
+    pathModule,
+  };
+}
+
+async function verifyRealPath(
+  rootPath: string,
+  candidatePath: string,
+  pathModule: typeof path.posix | typeof path.win32
+): Promise<boolean> {
+  try {
+    const [rootRealPath, candidateRealPath] = await Promise.all([
+      fs.realpath(rootPath),
+      fs.realpath(candidatePath),
+    ]);
+    return isWithinRoot(rootRealPath, candidateRealPath, pathModule);
+  } catch {
+    return false;
+  }
+}
+
+function getLogSource(id: string | null): LogSource | null {
+  if (!id) return null;
+  return logSourceMap.get(id) ?? null;
+}
+
 function getHeaderValue(
   req: http.IncomingMessage,
   headerName: string
@@ -584,6 +829,182 @@ async function getDockerContainers(): Promise<DockerResult> {
 
     return { ok: false, status: 500, error: "docker error" };
   }
+}
+
+async function listDirectoryEntries(
+  directoryPath: string,
+  pathModule: typeof path.posix | typeof path.win32
+): Promise<FileEntry[]> {
+  const entries = await fs.readdir(directoryPath, { withFileTypes: true });
+  const results: FileEntry[] = [];
+
+  for (const entry of entries) {
+    const entryPath = pathModule.join(directoryPath, entry.name);
+    let stats: { size: number; mtimeMs: number } | null = null;
+    try {
+      const info = await fs.lstat(entryPath);
+      stats = { size: info.size, mtimeMs: info.mtimeMs };
+    } catch {
+      stats = null;
+    }
+
+    const type = entry.isDirectory()
+      ? "dir"
+      : entry.isFile()
+      ? "file"
+      : "other";
+
+    results.push({
+      name: entry.name,
+      type,
+      sizeBytes: stats ? stats.size : null,
+      modifiedMs: stats ? stats.mtimeMs : null,
+    });
+  }
+
+  return results.sort((a, b) => {
+    if (a.type !== b.type) {
+      if (a.type === "dir") return -1;
+      if (b.type === "dir") return 1;
+      if (a.type === "file") return -1;
+      if (b.type === "file") return 1;
+    }
+    return a.name.localeCompare(b.name);
+  });
+}
+
+async function tailFile(
+  filePath: string,
+  lines: number
+): Promise<LogResult> {
+  try {
+    const { stdout } = await execFileAsync(
+      "tail",
+      ["-n", String(lines), filePath],
+      { timeout: 4000 }
+    );
+    return { ok: true, content: stdout };
+  } catch (error) {
+    const message =
+      typeof error === "object" && error
+        ? String(
+            (error as { stderr?: string; message?: string }).stderr ??
+              (error as { message?: string }).message ??
+              ""
+          )
+        : "";
+    const lowered = message.toLowerCase();
+    if (lowered.includes("no such file") || lowered.includes("enoent")) {
+      return { ok: false, status: 404, error: "log file not found" };
+    }
+    if (lowered.includes("permission denied") || lowered.includes("eacces")) {
+      return { ok: false, status: 403, error: "log access denied" };
+    }
+    return { ok: false, status: 500, error: "log tail error" };
+  }
+}
+
+async function tailDockerLogs(
+  container: string,
+  lines: number
+): Promise<LogResult> {
+  try {
+    const { stdout } = await execFileAsync(
+      "docker",
+      ["logs", "--tail", String(lines), container],
+      { timeout: 4000 }
+    );
+    return { ok: true, content: stdout };
+  } catch (error) {
+    const message =
+      typeof error === "object" && error
+        ? String(
+            (error as { stderr?: string; message?: string }).stderr ??
+              (error as { message?: string }).message ??
+              ""
+          )
+        : "";
+    const lowered = message.toLowerCase();
+
+    if (
+      lowered.includes("cannot connect to the docker daemon") ||
+      lowered.includes("is the docker daemon running") ||
+      lowered.includes("error during connect") ||
+      lowered.includes("executable file not found") ||
+      lowered.includes("enoent")
+    ) {
+      return { ok: false, status: 503, error: "docker unavailable" };
+    }
+    if (lowered.includes("no such container")) {
+      return { ok: false, status: 404, error: "container not found" };
+    }
+    if (lowered.includes("permission denied")) {
+      return { ok: false, status: 403, error: "docker access denied" };
+    }
+    return { ok: false, status: 500, error: "docker logs error" };
+  }
+}
+
+async function tailSystemdLogs(
+  unit: string,
+  lines: number
+): Promise<LogResult> {
+  try {
+    const { stdout, stderr } = await execFileAsync(
+      "journalctl",
+      [
+        "-u",
+        unit,
+        "-n",
+        String(lines),
+        "--no-pager",
+        "--output",
+        "short-iso",
+      ],
+      { timeout: 4000 }
+    );
+    if (stderr && stderr.toLowerCase().includes("no entries")) {
+      return { ok: true, content: "" };
+    }
+    return { ok: true, content: stdout };
+  } catch (error) {
+    const message =
+      typeof error === "object" && error
+        ? String(
+            (error as { stderr?: string; message?: string }).stderr ??
+              (error as { message?: string }).message ??
+              ""
+          )
+        : "";
+    const lowered = message.toLowerCase();
+
+    if (
+      lowered.includes("failed to connect to bus") ||
+      lowered.includes("system has not been booted with systemd")
+    ) {
+      return { ok: false, status: 503, error: "systemd unavailable" };
+    }
+    if (lowered.includes("permission denied") || lowered.includes("access denied")) {
+      return { ok: false, status: 403, error: "systemd access denied" };
+    }
+    if (lowered.includes("unit") && lowered.includes("could not be found")) {
+      return { ok: false, status: 404, error: "unit not found" };
+    }
+    return { ok: false, status: 500, error: "systemd log error" };
+  }
+}
+
+async function getLogTail(
+  source: LogSource,
+  lines: number
+): Promise<LogResult> {
+  if (source.type === "docker") {
+    return tailDockerLogs(source.target, lines);
+  }
+  if (source.type === "systemd") {
+    return tailSystemdLogs(source.target, lines);
+  }
+  return tailFile(source.target, lines);
 }
 
 async function getSystemdUnits(): Promise<SystemdResult> {
@@ -754,6 +1175,146 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, {
         timestamp: new Date().toISOString(),
         units: result.units,
+      });
+      logRequest(method, url.pathname, 200, startTime);
+      return;
+    }
+
+    if (url.pathname === "/files/list") {
+      const rootId = url.searchParams.get("root");
+      const relativePath = url.searchParams.get("path");
+      const resolved = await resolveAllowlistPath(rootId, relativePath);
+
+      if (!resolved.ok) {
+        sendError(res, resolved.status, resolved.error);
+        logRequest(method, url.pathname, resolved.status, startTime);
+        return;
+      }
+
+      let stat: Awaited<ReturnType<typeof fs.stat>>;
+      try {
+        stat = await fs.stat(resolved.resolvedPath);
+      } catch {
+        sendError(res, 404, "Path not found");
+        logRequest(method, url.pathname, 404, startTime);
+        return;
+      }
+
+      if (!stat.isDirectory()) {
+        sendError(res, 400, "Path is not a directory");
+        logRequest(method, url.pathname, 400, startTime);
+        return;
+      }
+
+      const isAllowed = await verifyRealPath(
+        resolved.rootPath,
+        resolved.resolvedPath,
+        resolved.pathModule
+      );
+      if (!isAllowed) {
+        sendError(res, 403, "Path outside allowlist");
+        logRequest(method, url.pathname, 403, startTime);
+        return;
+      }
+
+      const entries = await listDirectoryEntries(
+        resolved.resolvedPath,
+        resolved.pathModule
+      );
+
+      sendJson(res, 200, {
+        timestamp: new Date().toISOString(),
+        root: resolved.root.id,
+        path: relativePath ?? "",
+        entries,
+      });
+      logRequest(method, url.pathname, 200, startTime);
+      return;
+    }
+
+    if (url.pathname === "/files/download") {
+      const rootId = url.searchParams.get("root");
+      const relativePath = url.searchParams.get("path");
+      const resolved = await resolveAllowlistPath(rootId, relativePath);
+
+      if (!resolved.ok) {
+        sendError(res, resolved.status, resolved.error);
+        logRequest(method, url.pathname, resolved.status, startTime);
+        return;
+      }
+
+      let stat: Awaited<ReturnType<typeof fs.stat>>;
+      try {
+        stat = await fs.stat(resolved.resolvedPath);
+      } catch {
+        sendError(res, 404, "Path not found");
+        logRequest(method, url.pathname, 404, startTime);
+        return;
+      }
+
+      if (!stat.isFile()) {
+        sendError(res, 400, "Path is not a file");
+        logRequest(method, url.pathname, 400, startTime);
+        return;
+      }
+
+      const isAllowed = await verifyRealPath(
+        resolved.rootPath,
+        resolved.resolvedPath,
+        resolved.pathModule
+      );
+      if (!isAllowed) {
+        sendError(res, 403, "Path outside allowlist");
+        logRequest(method, url.pathname, 403, startTime);
+        return;
+      }
+
+      const fileName = resolved.pathModule.basename(resolved.resolvedPath);
+      res.writeHead(200, {
+        "Content-Type": "application/octet-stream",
+        "Content-Length": stat.size,
+        "Content-Disposition": `attachment; filename=\"${fileName}\"`,
+        "Cache-Control": "no-store",
+      });
+
+      const stream = createReadStream(resolved.resolvedPath);
+      stream.on("error", () => {
+        if (!res.headersSent) {
+          sendError(res, 500, "File read error");
+        } else {
+          res.destroy();
+        }
+      });
+      stream.pipe(res);
+      logRequest(method, url.pathname, 200, startTime);
+      return;
+    }
+
+    if (url.pathname === "/logs/tail") {
+      const sourceId = url.searchParams.get("source");
+      const source = getLogSource(sourceId);
+      if (!source) {
+        sendError(res, 404, "Unknown log source");
+        logRequest(method, url.pathname, 404, startTime);
+        return;
+      }
+
+      const rawLines = url.searchParams.get("lines");
+      const parsedLines = rawLines ? Number.parseInt(rawLines, 10) : NaN;
+      const lines = clampLines(Number.isFinite(parsedLines) ? parsedLines : LOG_DEFAULT_LINES);
+
+      const result = await getLogTail(source, lines);
+      if (!result.ok) {
+        sendError(res, result.status, result.error);
+        logRequest(method, url.pathname, result.status, startTime);
+        return;
+      }
+
+      sendJson(res, 200, {
+        timestamp: new Date().toISOString(),
+        source: source.id,
+        lines,
+        content: result.content,
       });
       logRequest(method, url.pathname, 200, startTime);
       return;

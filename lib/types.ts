@@ -67,3 +67,24 @@ export type SystemdUnitsResponse = {
   timestamp: string;
   units: SystemdUnitInfo[];
 };
+
+export type FileEntry = {
+  name: string;
+  type: "file" | "dir" | "other";
+  sizeBytes: number | null;
+  modifiedMs: number | null;
+};
+
+export type FileListResponse = {
+  timestamp: string;
+  root: string;
+  path: string;
+  entries: FileEntry[];
+};
+
+export type LogTailResponse = {
+  timestamp: string;
+  source: string;
+  lines: number;
+  content: string;
+};

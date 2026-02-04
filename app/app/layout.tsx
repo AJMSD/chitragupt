@@ -10,7 +10,8 @@ export default async function AppLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const token = cookies().get(SESSION_COOKIE_NAME)?.value;
+  const cookieStore = await cookies();
+  const token = cookieStore.get(SESSION_COOKIE_NAME)?.value;
   const session = await verifySessionToken(token);
 
   if (!session) {

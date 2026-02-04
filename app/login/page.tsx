@@ -14,7 +14,8 @@ type LoginPageProps = {
 export const dynamic = "force-dynamic";
 
 export default async function LoginPage({ searchParams }: LoginPageProps) {
-  const token = cookies().get(SESSION_COOKIE_NAME)?.value;
+  const cookieStore = await cookies();
+  const token = cookieStore.get(SESSION_COOKIE_NAME)?.value;
   const session = await verifySessionToken(token);
 
   const rawNext = Array.isArray(searchParams?.next)

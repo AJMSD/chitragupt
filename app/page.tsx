@@ -355,7 +355,7 @@ export default function Home() {
                 ? "Loading..."
                 : "--"
             }
-            secondaryLabel="Load"
+            secondaryLabel="Load (1/5/15m)"
             secondaryValue={
               metrics
                 ? metrics.cpu.loadAverages
@@ -386,6 +386,10 @@ export default function Home() {
                 : "N/A"
             }
           />
+          <p className="text-xs text-slate-500 md:col-span-2">
+            Load averages reflect the number of runnable or uninterruptible
+            processes over the last 1, 5, and 15 minutes.
+          </p>
         </section>
 
         <section className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">

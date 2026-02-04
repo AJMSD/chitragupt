@@ -1,4 +1,4 @@
-﻿# ajmsd-ops
+# ajmsd-ops
 A self-hosted operations dashboard for Aman's Ubuntu server.
 
 ## Current MVP (Public)
@@ -11,6 +11,11 @@ A self-hosted operations dashboard for Aman's Ubuntu server.
 2. Copy env template if needed: `copy .env.example .env`
 3. Start agent + web together: `npm run dev`
 4. Open `http://localhost:3000`
+
+## Private Access
+- Set `AUTH_PASSWORD` and `AUTH_SECRET` in `.env`.
+- Visit `/login` to authenticate; `/app/*` routes require a valid session.
+- Session duration defaults to 7 days (`AUTH_SESSION_MAX_AGE_SECONDS`).
 
 ## Agent Endpoints
 - `GET /health`

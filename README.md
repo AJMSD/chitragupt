@@ -22,3 +22,4 @@ A self-hosted operations dashboard for Aman's Ubuntu server.
 - The agent uses Node's built-in `http` server to avoid extra dependencies.
 - The agent and web both load environment variables from `.env`.
 - If the agent runs on a different port, set `AGENT_URL` accordingly.
+- You can override disk types with `DISK_TYPE_OVERRIDE` in `.env` (mount or device path).

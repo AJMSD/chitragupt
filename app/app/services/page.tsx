@@ -12,6 +12,8 @@ import { fetchJson, formatApiError } from "@/lib/client";
 
 type StatusTone = "emerald" | "amber" | "rose" | "slate";
 
+type StatusLevel = "ok" | "warn" | "error" | "idle";
+
 function toneClass(tone: StatusTone) {
   if (tone === "emerald") return "text-emerald-300";
   if (tone === "amber") return "text-amber-300";
@@ -19,41 +21,43 @@ function toneClass(tone: StatusTone) {
   return "text-slate-500/40";
 }
 
-function HeartGroup({ label, count, tone }: { label: string; count: number; tone: StatusTone }) {
-  const hearts = Array.from({ length: count }, (_, index) => (
-    <IconHeart key={`${label}-${index}`} className={`h-6 w-6 ${toneClass(tone)}`} />
-  ));
+function levelToTone(level: StatusLevel): StatusTone {
+  if (level === "ok") return "emerald";
+  if (level === "warn") return "amber";
+  if (level === "error") return "rose";
+  return "slate";
+}
 
+function StatusHearts({ level, sizeClass = "h-6 w-6" }: { level: StatusLevel; sizeClass?: string }) {
+  const tone = levelToTone(level);
+  const count = level === "ok" ? 3 : level === "warn" ? 2 : level === "error" ? 1 : 3;
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <span className="text-[10px] uppercase tracking-[0.3em] text-amber-200/60">
-        {label}
-      </span>
-      <div className="flex flex-wrap items-center gap-1">
-        {hearts.length > 0 ? hearts : <span className="text-xs text-amber-100/50">0</span>}
-      </div>
+    <div className="flex items-center gap-1">
+      {Array.from({ length: count }, (_, index) => (
+        <IconHeart key={`${level}-${index}`} className={`${sizeClass} ${toneClass(tone)}`} />
+      ))}
     </div>
   );
 }
 
-function getContainerStateTone(state: DockerContainerInfo["state"]): StatusTone {
-  if (state === "running") return "emerald";
-  if (state === "exited" || state === "dead") return "rose";
-  if (state === "restarting" || state === "paused") return "amber";
-  return "slate";
+function getContainerStateLevel(state: DockerContainerInfo["state"]): StatusLevel {
+  if (state === "running") return "ok";
+  if (state === "restarting" || state === "paused") return "warn";
+  if (state === "exited" || state === "dead") return "error";
+  return "idle";
 }
 
-function getContainerHealthTone(health: DockerContainerInfo["health"]): StatusTone {
-  if (health === "healthy") return "emerald";
-  if (health === "unhealthy") return "rose";
-  if (health === "starting") return "amber";
-  return "slate";
+function getContainerHealthLevel(health: DockerContainerInfo["health"]): StatusLevel {
+  if (health === "healthy") return "ok";
+  if (health === "starting") return "warn";
+  if (health === "unhealthy") return "error";
+  return "idle";
 }
 
-function getUnitTone(unit: SystemdUnitInfo): StatusTone {
-  if (unit.activeState === "active") return "emerald";
-  if (unit.activeState === "failed") return "rose";
-  return "amber";
+function getUnitLevel(unit: SystemdUnitInfo): StatusLevel {
+  if (unit.activeState === "active") return "ok";
+  if (unit.activeState === "failed") return "error";
+  return "warn";
 }
 
 export default function ServicesPage() {
@@ -126,6 +130,18 @@ export default function ServicesPage() {
     };
   }, [systemd]);
 
+  const dockerLevel: StatusLevel = containerSummary.total === 0
+    ? "idle"
+    : containerSummary.unhealthy > 0
+    ? "error"
+    : "ok";
+
+  const systemdLevel: StatusLevel = unitSummary.total === 0
+    ? "idle"
+    : unitSummary.failed > 0
+    ? "error"
+    : "ok";
+
   const updatedLabel = lastUpdated ? lastUpdated.toLocaleTimeString() : "--";
 
   return (
@@ -162,9 +178,11 @@ export default function ServicesPage() {
           <div className="mt-3 text-2xl font-semibold text-amber-100">
             {isLoading ? "Loading..." : containerSummary.total}
           </div>
-          <div className="mt-4 flex flex-wrap items-center gap-4">
-            <HeartGroup label="Running" count={containerSummary.running} tone="emerald" />
-            <HeartGroup label="Unhealthy" count={containerSummary.unhealthy} tone="rose" />
+          <div className="mt-4 flex items-center gap-3">
+            <StatusHearts level={dockerLevel} sizeClass="h-5 w-5" />
+            <span className="text-xs uppercase tracking-[0.3em] text-amber-200/60">
+              {containerSummary.unhealthy > 0 ? "Warning" : "OK"}
+            </span>
           </div>
         </div>
         <div className="rounded-[24px] border border-orange-500/20 bg-[#120c08]/70 p-5">
@@ -174,9 +192,11 @@ export default function ServicesPage() {
           <div className="mt-3 text-2xl font-semibold text-amber-100">
             {isLoading ? "Loading..." : unitSummary.total}
           </div>
-          <div className="mt-4 flex flex-wrap items-center gap-4">
-            <HeartGroup label="Active" count={unitSummary.running} tone="emerald" />
-            <HeartGroup label="Failed" count={unitSummary.failed} tone="rose" />
+          <div className="mt-4 flex items-center gap-3">
+            <StatusHearts level={systemdLevel} sizeClass="h-5 w-5" />
+            <span className="text-xs uppercase tracking-[0.3em] text-amber-200/60">
+              {unitSummary.failed > 0 ? "Warning" : "OK"}
+            </span>
           </div>
         </div>
       </div>
@@ -203,8 +223,8 @@ export default function ServicesPage() {
         ) : (
           <div className="grid gap-4">
             {containers.map((container) => {
-              const stateTone = getContainerStateTone(container.state);
-              const healthTone = getContainerHealthTone(container.health);
+              const stateLevel = getContainerStateLevel(container.state);
+              const healthLevel = getContainerHealthLevel(container.health);
               return (
                 <div
                   key={container.id}
@@ -223,14 +243,8 @@ export default function ServicesPage() {
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
-                      <IconHeart
-                        className={`h-7 w-7 ${toneClass(stateTone)}`}
-                        title={`State: ${container.state}`}
-                      />
-                      <IconHeart
-                        className={`h-7 w-7 ${toneClass(healthTone)}`}
-                        title={`Health: ${container.health}`}
-                      />
+                      <StatusHearts level={stateLevel} sizeClass="h-4 w-4" />
+                      <StatusHearts level={healthLevel} sizeClass="h-4 w-4" />
                     </div>
                   </div>
                   <div className="mt-3 text-xs text-amber-100/60">
@@ -268,7 +282,7 @@ export default function ServicesPage() {
         ) : (
           <div className="space-y-3">
             {units.map((unit) => {
-              const unitTone = getUnitTone(unit);
+              const unitLevel = getUnitLevel(unit);
               return (
                 <div
                   key={unit.name}
@@ -287,10 +301,7 @@ export default function ServicesPage() {
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <IconHeart
-                        className={`h-7 w-7 ${toneClass(unitTone)}`}
-                        title={unit.activeState}
-                      />
+                      <StatusHearts level={unitLevel} sizeClass="h-4 w-4" />
                       <span className="text-xs uppercase tracking-[0.3em] text-amber-200/60">
                         {unit.subState}
                       </span>

@@ -166,16 +166,42 @@ export function IconTerminal(props: IconProps) {
 }
 
 export function IconHeart(props: IconProps) {
+  const pixels = [
+    "01100110",
+    "11111111",
+    "11111111",
+    "01111110",
+    "00111100",
+    "00011000",
+    "00000000",
+    "00000000",
+  ];
+  const pixelSize = 2;
+  const offset = 4;
+
   return (
     <svg
       aria-hidden="true"
       viewBox="0 0 24 24"
       fill="currentColor"
       stroke="none"
+      shapeRendering="crispEdges"
       className={cx(props.className)}
       {...props}
     >
-      <path d="M12 21s-6.5-4.3-9-8.1C1.1 9.2 2.4 5.7 5.7 4.7c2-.6 4 .2 5.3 2 1.3-1.8 3.3-2.6 5.3-2 3.3 1 4.6 4.5 2.7 8.2C18.5 16.7 12 21 12 21z" />
+      {pixels.map((row, y) =>
+        row.split("").map((cell, x) =>
+          cell === "1" ? (
+            <rect
+              key={`${x}-${y}`}
+              x={offset + x * pixelSize}
+              y={offset + y * pixelSize}
+              width={pixelSize}
+              height={pixelSize}
+            />
+          ) : null
+        )
+      )}
     </svg>
   );
 }

@@ -12,6 +12,9 @@ import type { DiskInfo, DisksResponse, MetricsResponse } from "@/lib/types";
 
 const POLL_INTERVAL_MS = 5000;
 const MAX_HISTORY = 30;
+const CHART_SEGMENTS = 50;
+const LAST_MINUTE_SEGMENTS = 10;
+const LAST_MINUTE_POINTS = 12;
 const WARNING_THRESHOLDS = {
   cpu: 90,
   memory: 90,
@@ -89,22 +92,47 @@ function getStorageSummary(disks: DiskInfo[]) {
   return { totalBytes, usedBytes, usedPercent };
 }
 
+function interpolateSeries(values: number[], segments: number): number[] {
+  if (segments <= 1) return values;
+  if (values.length === 0) return Array.from({ length: segments }, () => 0);
+  if (values.length === 1) {
+    return Array.from({ length: segments }, () => values[0]);
+  }
+
+  const lastIndex = values.length - 1;
+  const result: number[] = [];
+
+  for (let i = 0; i < segments; i += 1) {
+    const t = (i / (segments - 1)) * lastIndex;
+    const index = Math.floor(t);
+    const next = Math.min(index + 1, lastIndex);
+    const fraction = t - index;
+    const value = values[index] + (values[next] - values[index]) * fraction;
+    result.push(value);
+  }
+
+  return result;
+}
+
 type LineChartProps = {
   data: number[];
   height?: number;
   stroke?: string;
   fill?: string;
+  segments?: number;
 };
 
 function LineChart({
   data,
-  height = 140,
+  height = 160,
   stroke = "#fb923c",
   fill = "rgba(251,146,60,0.18)",
+  segments = CHART_SEGMENTS,
 }: LineChartProps) {
   const id = useId();
   const width = 260;
-  const safeData = data.length >= 2 ? data : [0, 0];
+  const series = interpolateSeries(data, segments);
+  const safeData = series.length >= 2 ? series : [0, 0];
   const min = Math.min(...safeData);
   const max = Math.max(...safeData);
   const range = max - min || 1;
@@ -162,36 +190,48 @@ function LineChart({
   );
 }
 
-type HeartRowProps = {
-  ok: number;
-  warn: number;
-  error: number;
+function MiniBars({ values }: { values: number[] }) {
+  const max = Math.max(...values, 1);
+  return (
+    <div className="flex items-end gap-1">
+      {values.map((value, index) => {
+        const height = Math.max(6, Math.round((value / max) * 28));
+        return (
+          <span
+            key={`slice-${index}`}
+            className="w-2 rounded-full bg-gradient-to-t from-orange-500 to-amber-200"
+            style={{ height }}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+type StatusLevel = "ok" | "warn" | "error" | "idle";
+
+type StatusHeartsProps = {
+  level: StatusLevel;
   sizeClass?: string;
 };
 
-function HeartRow({ ok, warn, error, sizeClass = "h-10 w-10" }: HeartRowProps) {
-  const hearts: { tone: "ok" | "warn" | "error" | "idle"; key: string }[] = [];
-  for (let i = 0; i < ok; i += 1) hearts.push({ tone: "ok", key: `ok-${i}` });
-  for (let i = 0; i < warn; i += 1) hearts.push({ tone: "warn", key: `warn-${i}` });
-  for (let i = 0; i < error; i += 1) hearts.push({ tone: "error", key: `err-${i}` });
-  if (hearts.length === 0) {
-    for (let i = 0; i < 3; i += 1) hearts.push({ tone: "idle", key: `idle-${i}` });
-  }
+function StatusHearts({ level, sizeClass = "h-10 w-10" }: StatusHeartsProps) {
+  const color =
+    level === "ok"
+      ? "text-emerald-300"
+      : level === "warn"
+      ? "text-amber-300"
+      : level === "error"
+      ? "text-rose-400"
+      : "text-slate-500/40";
 
-  const toneClass = (tone: "ok" | "warn" | "error" | "idle") => {
-    if (tone === "ok") return "text-emerald-300";
-    if (tone === "warn") return "text-amber-300";
-    if (tone === "error") return "text-rose-400";
-    return "text-slate-500/40";
-  };
+  const count =
+    level === "ok" ? 3 : level === "warn" ? 2 : level === "error" ? 1 : 3;
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      {hearts.map((heart) => (
-        <IconHeart
-          key={heart.key}
-          className={`${sizeClass} ${toneClass(heart.tone)}`}
-        />
+      {Array.from({ length: count }, (_, index) => (
+        <IconHeart key={`${level}-${index}`} className={`${sizeClass} ${color}`} />
       ))}
     </div>
   );
@@ -217,6 +257,8 @@ function GpuCard({
   const stroke = accent === "amber" ? "#f59e0b" : "#fb923c";
   const fill =
     accent === "amber" ? "rgba(245,158,11,0.2)" : "rgba(251,146,60,0.18)";
+  const tempPercent =
+    tempValue !== null ? Math.min(Math.max((tempValue / 100) * 100, 0), 100) : null;
 
   return (
     <div className="rounded-[24px] border border-orange-500/20 bg-[#120c08]/70 p-5">
@@ -229,15 +271,25 @@ function GpuCard({
       <div className="mt-3 text-2xl font-semibold text-amber-100">
         {percent !== null ? `${percent.toFixed(0)}%` : "N/A"}
       </div>
-      <div className="mt-1 text-xs text-amber-100/60">
-        {tempValue !== null ? `${tempValue.toFixed(0)}°C` : "Temp N/A"}
+      <div className="mt-3">
+        <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.3em] text-amber-200/60">
+          <span>Temp</span>
+          <span>{tempValue !== null ? `${tempValue.toFixed(0)}°C` : "N/A"}</span>
+        </div>
+        <div className="mt-2 h-2 w-full rounded-full bg-black/40">
+          <div
+            className="h-2 rounded-full bg-gradient-to-r from-amber-300 via-orange-400 to-rose-400"
+            style={{ width: tempPercent !== null ? `${tempPercent}%` : "12%", opacity: tempPercent !== null ? 1 : 0.4 }}
+          />
+        </div>
       </div>
       <div className="mt-4">
         <LineChart
-          data={typeof percent === "number" ? [percent - 5, percent - 2, percent, percent + 2, percent] : [0, 0]}
-          height={90}
+          data={percent !== null ? [percent] : [0, 0]}
+          height={110}
           stroke={stroke}
           fill={fill}
+          segments={20}
         />
       </div>
     </div>
@@ -365,27 +417,22 @@ export default function Home() {
   const storageDisks = useMemo(() => getStorageDisks(disks), [disks]);
   const storageSummary = useMemo(() => getStorageSummary(storageDisks), [storageDisks]);
 
-  const statusCounts = useMemo(() => {
-    if (error) {
-      return { ok: 0, warn: 0, error: 3 };
-    }
-    if (!metrics) {
-      return { ok: 0, warn: 0, error: 0 };
-    }
-
-    const checks = [
-      metrics.cpu.usagePercent >= WARNING_THRESHOLDS.cpu,
-      metrics.memory.usedPercent >= WARNING_THRESHOLDS.memory,
-      storageDisks.some((disk) => disk.usedPercent >= WARNING_THRESHOLDS.disk),
-    ];
-
-    const warn = checks.filter(Boolean).length;
-    const ok = checks.length - warn;
-
-    return { ok, warn, error: 0 };
+  const statusLevel = useMemo<StatusLevel>(() => {
+    if (error) return "error";
+    if (!metrics) return "idle";
+    const hasWarning =
+      metrics.cpu.usagePercent >= WARNING_THRESHOLDS.cpu ||
+      metrics.memory.usedPercent >= WARNING_THRESHOLDS.memory ||
+      storageDisks.some((disk) => disk.usedPercent >= WARNING_THRESHOLDS.disk);
+    return hasWarning ? "warn" : "ok";
   }, [error, metrics, storageDisks]);
 
   const lastUpdatedLabel = lastUpdated ? lastUpdated.toLocaleTimeString() : "--";
+
+  const lastMinuteSeries = useMemo(() => {
+    const lastPoints = loadHistory.slice(-LAST_MINUTE_POINTS);
+    return interpolateSeries(lastPoints.length ? lastPoints : [0], LAST_MINUTE_SEGMENTS);
+  }, [loadHistory]);
 
   return (
     <div className="min-h-screen bg-[#090605] text-slate-100">
@@ -416,12 +463,7 @@ export default function Home() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <HeartRow
-              ok={statusCounts.ok}
-              warn={statusCounts.warn}
-              error={statusCounts.error}
-              sizeClass="h-11 w-11"
-            />
+            <StatusHearts level={statusLevel} sizeClass="h-11 w-11" />
             <Link
               className="flex h-11 w-11 items-center justify-center rounded-full border border-orange-400/50 bg-orange-400/10 text-orange-100 transition hover:border-orange-300 hover:bg-orange-400/20"
               href={isAuthenticated ? "/app" : "/login?next=/app"}
@@ -459,7 +501,7 @@ export default function Home() {
                 </h2>
               </div>
               <div className="text-[11px] uppercase tracking-[0.3em] text-amber-200/60">
-                30 segments (last 2.5 minutes)
+                50 segments (last 2.5 minutes)
               </div>
             </div>
             <div className="mt-6">
@@ -479,6 +521,14 @@ export default function Home() {
                 <div>{metrics ? metrics.cpu.loadAverages[2].toFixed(2) : "--"}</div>
               </div>
             </div>
+            <div className="mt-4">
+              <div className="text-[11px] uppercase tracking-[0.3em] text-amber-200/60">
+                Last minute (10 slices)
+              </div>
+              <div className="mt-2">
+                <MiniBars values={lastMinuteSeries} />
+              </div>
+            </div>
           </div>
 
           <div className="space-y-4">
@@ -488,7 +538,7 @@ export default function Home() {
                 {metrics ? `${metrics.cpu.usagePercent.toFixed(1)}%` : isLoading ? "Loading..." : "--"}
               </div>
               <div className="mt-4">
-                <LineChart data={cpuHistory.length ? cpuHistory : [0, 0]} height={110} />
+                <LineChart data={cpuHistory.length ? cpuHistory : [0, 0]} height={130} />
               </div>
             </div>
 
@@ -498,13 +548,30 @@ export default function Home() {
                 {metrics ? `${metrics.memory.usedPercent.toFixed(1)}%` : isLoading ? "Loading..." : "--"}
               </div>
               <div className="mt-4">
-                <LineChart data={memoryHistory.length ? memoryHistory : [0, 0]} height={110} stroke="#f59e0b" fill="rgba(245,158,11,0.2)" />
+                <LineChart data={memoryHistory.length ? memoryHistory : [0, 0]} height={130} stroke="#f59e0b" fill="rgba(245,158,11,0.2)" />
               </div>
             </div>
           </div>
         </section>
 
-        <section className="grid gap-4 lg:grid-cols-[1fr_1fr]">
+        <section className="grid gap-4 md:grid-cols-2">
+          <GpuCard
+            title="NVIDIA GPU"
+            name={metrics?.gpu?.name}
+            utilization={metrics?.gpu?.utilizationPercent ?? null}
+            temperature={metrics?.gpu?.temperatureC ?? null}
+            accent="orange"
+          />
+          <GpuCard
+            title="Intel GPU"
+            name={metrics?.gpuIntel?.name}
+            utilization={metrics?.gpuIntel?.utilizationPercent ?? null}
+            temperature={metrics?.gpuIntel?.temperatureC ?? null}
+            accent="amber"
+          />
+        </section>
+
+        <section className="grid gap-4 lg:grid-cols-[1fr_2fr]">
           <div className="rounded-[24px] border border-orange-500/20 bg-[#120c08]/70 p-5">
             <p className="text-xs uppercase tracking-[0.3em] text-amber-200/70">Storage</p>
             <div className="mt-2 text-2xl font-semibold text-amber-100">
@@ -516,78 +583,61 @@ export default function Home() {
                 : "--"}
             </div>
             <div className="mt-4">
-              <LineChart data={storageHistory.length ? storageHistory : [0, 0]} height={110} stroke="#f97316" fill="rgba(249,115,22,0.22)" />
+              <LineChart data={storageHistory.length ? storageHistory : [0, 0]} height={130} stroke="#f97316" fill="rgba(249,115,22,0.22)" />
             </div>
             <div className="mt-4 text-xs text-amber-100/70">
               Uptime: {metrics ? formatUptime(metrics.uptimeSeconds) : "--"}
             </div>
           </div>
 
-          <div className="grid gap-4">
-            <GpuCard
-              title="NVIDIA GPU"
-              name={metrics?.gpu?.name}
-              utilization={metrics?.gpu?.utilizationPercent ?? null}
-              temperature={metrics?.gpu?.temperatureC ?? null}
-              accent="orange"
-            />
-            <GpuCard
-              title="Intel GPU"
-              name={metrics?.gpuIntel?.name}
-              utilization={metrics?.gpuIntel?.utilizationPercent ?? null}
-              temperature={metrics?.gpuIntel?.temperatureC ?? null}
-              accent="amber"
-            />
-          </div>
-        </section>
-
-        <section className="rounded-[28px] border border-orange-500/20 bg-[#120c08]/75 p-6">
-          <div className="flex items-center justify-between">
-            <h2 className="font-[var(--font-display)] text-2xl text-amber-100">Disk Terrain</h2>
-            <span className="text-[11px] uppercase tracking-[0.3em] text-amber-200/60">
-              Updated {lastUpdatedLabel}
-            </span>
-          </div>
-
-          {storageDisks.length === 0 ? (
-            <div className="mt-6 rounded-2xl border border-orange-500/20 bg-black/40 px-4 py-6 text-sm text-amber-100/70">
-              {isLoading ? "Loading disks..." : "No disks reported."}
+          <div className="rounded-[28px] border border-orange-500/20 bg-[#120c08]/75 p-6">
+            <div className="flex items-center justify-between">
+              <h2 className="font-[var(--font-display)] text-2xl text-amber-100">Disk Terrain</h2>
+              <span className="text-[11px] uppercase tracking-[0.3em] text-amber-200/60">
+                Updated {lastUpdatedLabel}
+              </span>
             </div>
-          ) : (
-            <div className="mt-6 grid gap-4 sm:grid-cols-2">
-              {storageDisks.map((disk) => (
-                <div
-                  key={`${disk.filesystem}-${disk.mount}`}
-                  className="rounded-[20px] border border-orange-500/20 bg-black/40 p-4"
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
+
+            {storageDisks.length === 0 ? (
+              <div className="mt-6 rounded-2xl border border-orange-500/20 bg-black/40 px-4 py-6 text-sm text-amber-100/70">
+                {isLoading ? "Loading disks..." : "No disks reported."}
+              </div>
+            ) : (
+              <div className="mt-6 grid gap-4 sm:grid-cols-2">
+                {storageDisks.map((disk) => (
+                  <div
+                    key={`${disk.filesystem}-${disk.mount}`}
+                    className="rounded-[20px] border border-orange-500/20 bg-black/40 p-4"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="text-sm font-semibold text-amber-100">
+                          {getDiskLabel(disk.mount)}
+                        </div>
+                        <div className="text-[10px] uppercase tracking-[0.3em] text-amber-200/60">
+                          {(disk.driveType ?? "unknown") === "unknown"
+                            ? "Unknown"
+                            : disk.driveType.toUpperCase()}
+                        </div>
+                      </div>
                       <div className="text-sm font-semibold text-amber-100">
-                        {getDiskLabel(disk.mount)}
-                      </div>
-                      <div className="text-[10px] uppercase tracking-[0.3em] text-amber-200/60">
-                        {(disk.driveType ?? "unknown") === "unknown"
-                          ? "Unknown"
-                          : disk.driveType.toUpperCase()}
+                        {disk.usedPercent.toFixed(1)}%
                       </div>
                     </div>
-                    <div className="text-sm font-semibold text-amber-100">
-                      {disk.usedPercent.toFixed(1)}%
+                    <div className="mt-3 h-2 w-full rounded-full bg-black/40">
+                      <div
+                        className="h-2 rounded-full bg-gradient-to-r from-amber-300 via-orange-400 to-orange-600"
+                        style={{ width: `${disk.usedPercent}%` }}
+                      />
+                    </div>
+                    <div className="mt-3 text-xs text-amber-100/60">
+                      {formatBytes(disk.usedBytes)} / {formatBytes(disk.sizeBytes)}
                     </div>
                   </div>
-                  <div className="mt-3 h-2 w-full rounded-full bg-black/40">
-                    <div
-                      className="h-2 rounded-full bg-gradient-to-r from-amber-300 via-orange-400 to-orange-600"
-                      style={{ width: `${disk.usedPercent}%` }}
-                    />
-                  </div>
-                  <div className="mt-3 text-xs text-amber-100/60">
-                    {formatBytes(disk.usedBytes)} / {formatBytes(disk.sizeBytes)}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+                ))}
+              </div>
+            )}
+          </div>
         </section>
       </div>
     </div>

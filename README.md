@@ -27,6 +27,36 @@ A self-hosted operations dashboard for Aman's Ubuntu server.
    - Web: `npm start`
 5. (Optional) Move to systemd units for auto-start on reboot.
 
+## Troubleshooting
+- **Public page shows agent unavailable**
+  - Confirm the agent is running and bound to `127.0.0.1`.
+  - Check `AGENT_URL` in `.env` matches the agent port.
+  - Verify the agent logs for startup errors.
+- **Private routes return 401**
+  - Ensure `AUTH_PASSWORD` and `AUTH_SECRET` are set.
+  - Log out and log back in to refresh the session cookie.
+- **Private API returns 401/403 from agent**
+  - Ensure `AGENT_TOKEN` is set in both web and agent environments.
+  - Confirm headers match `AGENT_TOKEN_HEADER`, `AGENT_PRIVATE_HEADER`, and `AGENT_PRIVATE_VALUE`.
+- **Docker/systemd endpoints fail**
+  - Confirm the agent user has permission to access Docker or systemd.
+  - Check `journalctl` for service errors if using systemd units.
+
+## Safe Update & Rollback Checklist
+1. Pull latest code and review diffs: `git pull --ff-only`
+2. Install dependencies: `npm install`
+3. Build: `npm run build` and `npm run agent:build`
+4. Restart services:
+   - Manual: stop/start both agent and web processes
+   - Systemd: `sudo systemctl restart ajmsd-ops-agent ajmsd-ops-web`
+5. Verify:
+   - Public page loads and updates
+   - Private login works
+   - `GET /api/public/metrics` and `GET /api/public/disks` return 200
+6. Rollback (if needed):
+   - `git reset --hard <previous_commit>`
+   - Rebuild and restart both services
+
 ## Private Access
 - Set `AUTH_PASSWORD` and `AUTH_SECRET` in `.env`.
 - Visit `/login` to authenticate; `/app/*` routes require a valid session.

@@ -1,7 +1,7 @@
 ﻿"use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { IconRefresh, IconTerminal } from "@/app/components/icons";
+import { IconArrowRight, IconRefresh, IconTerminal } from "@/app/components/icons";
 import type {
   LogSourceInfo,
   LogSourcesResponse,
@@ -21,6 +21,11 @@ export default function LogsPage() {
   const [loadingSources, setLoadingSources] = useState(true);
   const [loadingTail, setLoadingTail] = useState(false);
   const logRef = useRef<HTMLPreElement | null>(null);
+
+  const clampLines = useCallback((value: number) => {
+    if (!Number.isFinite(value)) return DEFAULT_LINES;
+    return Math.min(500, Math.max(50, value));
+  }, []);
 
   const loadSources = useCallback(async () => {
     setLoadingSources(true);
@@ -108,17 +113,20 @@ export default function LogsPage() {
           </div>
         ) : (
           <div className="mt-3 flex flex-wrap items-center gap-3">
-            <select
-              className="rounded-2xl border border-orange-500/30 bg-black/40 px-4 py-2 text-sm text-amber-50 focus:border-orange-300/70 focus:outline-none"
-              value={currentSource}
-              onChange={(event) => setCurrentSource(event.target.value)}
-            >
-              {sources.map((source) => (
-                <option key={source.id} value={source.id}>
-                  {source.label}
-                </option>
-              ))}
-            </select>
+            <div className="relative">
+              <select
+                className="appearance-none rounded-2xl border border-orange-500/30 bg-black/40 py-2 pl-4 pr-10 text-sm text-amber-50 focus:border-orange-300/70 focus:outline-none"
+                value={currentSource}
+                onChange={(event) => setCurrentSource(event.target.value)}
+              >
+                {sources.map((source) => (
+                  <option key={source.id} value={source.id}>
+                    {source.label}
+                  </option>
+                ))}
+              </select>
+              <IconArrowRight className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 rotate-90 text-amber-200/70" />
+            </div>
             {activeSource ? (
               <div className="flex items-center gap-2 text-xs uppercase tracking-[0.3em] text-amber-200/60">
                 <IconTerminal className="h-4 w-4" />
@@ -149,14 +157,40 @@ export default function LogsPage() {
           <label className="text-xs uppercase tracking-[0.3em] text-amber-200/70">
             Lines
           </label>
-          <input
-            className="w-24 rounded-2xl border border-orange-500/30 bg-black/40 px-3 py-2 text-sm text-amber-50 focus:border-orange-300/70 focus:outline-none"
-            type="number"
-            min={50}
-            max={500}
-            value={lines}
-            onChange={(event) => setLines(Number(event.target.value))}
-          />
+          <div className="flex items-center gap-2 rounded-2xl border border-orange-500/30 bg-black/40 px-3 py-2">
+            <input
+              className="w-20 appearance-none bg-transparent text-sm text-amber-50 focus:outline-none"
+              type="number"
+              min={50}
+              max={500}
+              step={10}
+              value={lines}
+              onChange={(event) => {
+                const value = Number(event.target.value);
+                setLines(clampLines(value));
+              }}
+            />
+            <div className="flex flex-col">
+              <button
+                type="button"
+                className="flex h-5 w-6 items-center justify-center rounded-md border border-orange-400/40 bg-orange-400/10 text-orange-100 transition hover:border-orange-300 hover:bg-orange-400/20"
+                onClick={() => setLines((prev) => clampLines(prev + 10))}
+                aria-label="Increase lines"
+                title="Increase lines"
+              >
+                <IconArrowRight className="h-3 w-3 -rotate-90" />
+              </button>
+              <button
+                type="button"
+                className="mt-1 flex h-5 w-6 items-center justify-center rounded-md border border-orange-400/40 bg-orange-400/10 text-orange-100 transition hover:border-orange-300 hover:bg-orange-400/20"
+                onClick={() => setLines((prev) => clampLines(prev - 10))}
+                aria-label="Decrease lines"
+                title="Decrease lines"
+              >
+                <IconArrowRight className="h-3 w-3 rotate-90" />
+              </button>
+            </div>
+          </div>
         </div>
 
         {tailError ? (

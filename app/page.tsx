@@ -15,6 +15,8 @@ const POLL_INTERVAL_MS = 5000;
 const MAX_HISTORY = 30;
 const CHART_SEGMENTS = 250;
 const SMOOTH_FACTOR = 0.35;
+const CHART_WIDTH = 400;
+const CHART_PADDING = 8;
 const WARNING_THRESHOLDS = {
   cpu: 90,
   memory: 90,
@@ -139,13 +141,13 @@ function LineChart({
   segments = CHART_SEGMENTS,
 }: LineChartProps) {
   const id = useId();
-  const width = 340;
+  const width = CHART_WIDTH;
   const series = interpolateSeries(data, segments);
   const safeData = series.length >= 2 ? series : [0, 0];
   const min = Math.min(...safeData);
   const max = Math.max(...safeData);
   const range = max - min || 1;
-  const padding = 12;
+  const padding = CHART_PADDING;
   const points = safeData.map((value, index) => {
     const x = padding + (index / (safeData.length - 1)) * (width - padding * 2);
     const y = padding + (1 - (value - min) / range) * (height - padding * 2);
@@ -195,6 +197,124 @@ function LineChart({
         r="4"
         fill={stroke}
       />
+    </svg>
+  );
+}
+
+type MultiLineSeries = {
+  data: number[];
+  stroke: string;
+  strokeWidth?: number;
+  fill?: string;
+  showDot?: boolean;
+};
+
+type MultiLineChartProps = {
+  series: MultiLineSeries[];
+  height?: number;
+  segments?: number;
+};
+
+function MultiLineChart({
+  series,
+  height = 220,
+  segments = CHART_SEGMENTS,
+}: MultiLineChartProps) {
+  const id = useId();
+  const width = CHART_WIDTH;
+  const padding = CHART_PADDING;
+
+  const interpolated = series.map((item) => ({
+    ...item,
+    values: interpolateSeries(item.data, segments),
+  }));
+
+  const allValues = interpolated.flatMap((item) => item.values);
+  const safeValues = allValues.length > 0 ? allValues : [0];
+  const min = Math.min(...safeValues);
+  const max = Math.max(...safeValues);
+  const range = max - min || 1;
+
+  const buildPath = (values: number[]) => {
+    const points = values.map((value, index) => {
+      const x = padding + (index / (values.length - 1)) * (width - padding * 2);
+      const y = padding + (1 - (value - min) / range) * (height - padding * 2);
+      return { x, y };
+    });
+
+    const linePath = points
+      .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
+      .join(" ");
+
+    return { points, linePath };
+  };
+
+  const primary = interpolated[0];
+  const primaryPath = primary ? buildPath(primary.values) : null;
+  const areaPath = primaryPath
+    ? `${primaryPath.linePath} L ${primaryPath.points[primaryPath.points.length - 1].x} ${
+        height - padding
+      } L ${primaryPath.points[0].x} ${height - padding} Z`
+    : "";
+  const gradientId = `multi-${id}`;
+
+  return (
+    <svg
+      width={width}
+      height={height}
+      viewBox={`0 0 ${width} ${height}`}
+      className="w-full"
+      role="img"
+      aria-label="Load average chart"
+    >
+      {primary?.fill ? (
+        <defs>
+          <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={primary.stroke} stopOpacity="0.55" />
+            <stop offset="100%" stopColor={primary.stroke} stopOpacity="0.05" />
+          </linearGradient>
+        </defs>
+      ) : null}
+      <g>
+        {[0.25, 0.5, 0.75].map((fraction) => (
+          <line
+            key={fraction}
+            x1={padding}
+            x2={width - padding}
+            y1={padding + fraction * (height - padding * 2)}
+            y2={padding + fraction * (height - padding * 2)}
+            stroke="rgba(251,146,60,0.18)"
+            strokeWidth="1"
+          />
+        ))}
+      </g>
+      {primary && primaryPath ? (
+        <path
+          d={areaPath}
+          fill={primary.fill ? `url(#${gradientId})` : "none"}
+        />
+      ) : null}
+      {interpolated.map((item, index) => {
+        const { linePath, points } = buildPath(item.values);
+        return (
+          <g key={`${item.stroke}-${index}`}>
+            <path
+              d={linePath}
+              fill="none"
+              stroke={item.stroke}
+              strokeWidth={item.strokeWidth ?? 2}
+            />
+            {item.showDot ? (
+              <circle
+                cx={points[points.length - 1].x}
+                cy={points[points.length - 1].y}
+                r="4"
+                fill={item.stroke}
+              />
+            ) : null}
+          </g>
+        );
+      })}
     </svg>
   );
 }
@@ -297,6 +417,8 @@ export default function Home() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authLoaded, setAuthLoaded] = useState(false);
   const [loadHistory, setLoadHistory] = useState<number[]>([]);
+  const [loadHistory5m, setLoadHistory5m] = useState<number[]>([]);
+  const [loadHistory15m, setLoadHistory15m] = useState<number[]>([]);
   const [cpuHistory, setCpuHistory] = useState<number[]>([]);
   const [memoryHistory, setMemoryHistory] = useState<number[]>([]);
   const [storageHistory, setStorageHistory] = useState<number[]>([]);
@@ -326,6 +448,12 @@ export default function Home() {
 
       setLoadHistory((prev) =>
         smoothPush(prev, metricsData.cpu.loadAverages[0] ?? 0, MAX_HISTORY)
+      );
+      setLoadHistory5m((prev) =>
+        smoothPush(prev, metricsData.cpu.loadAverages[1] ?? 0, MAX_HISTORY)
+      );
+      setLoadHistory15m((prev) =>
+        smoothPush(prev, metricsData.cpu.loadAverages[2] ?? 0, MAX_HISTORY)
       );
       setCpuHistory((prev) =>
         smoothPush(prev, metricsData.cpu.usagePercent ?? 0, MAX_HISTORY)
@@ -476,7 +604,7 @@ export default function Home() {
         ) : null}
 
         <section className="grid gap-4 lg:grid-cols-[2fr_1fr]">
-          <div className="rounded-[28px] border border-orange-500/20 bg-[#120c08]/75 p-6 shadow-[0_16px_40px_rgba(8,5,3,0.6)]">
+          <div className="rounded-[28px] border border-orange-500/20 bg-[#120c08]/75 p-5 shadow-[0_16px_40px_rgba(8,5,3,0.6)]">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
                 <p className="text-xs uppercase tracking-[0.3em] text-amber-200/70">
@@ -490,10 +618,31 @@ export default function Home() {
                 Last 2.5 minutes
               </div>
             </div>
-            <div className="mt-6">
-              <LineChart data={loadHistory.length ? loadHistory : [0, 0]} height={200} />
+            <div className="mt-4">
+              <MultiLineChart
+                height={230}
+                series={[
+                  {
+                    data: loadHistory.length ? loadHistory : [0, 0],
+                    stroke: "#fb923c",
+                    strokeWidth: 2.2,
+                    fill: "rgba(251,146,60,0.2)",
+                    showDot: true,
+                  },
+                  {
+                    data: loadHistory5m.length ? loadHistory5m : [0, 0],
+                    stroke: "#f59e0b",
+                    strokeWidth: 1.6,
+                  },
+                  {
+                    data: loadHistory15m.length ? loadHistory15m : [0, 0],
+                    stroke: "#fdba74",
+                    strokeWidth: 1.6,
+                  },
+                ]}
+              />
             </div>
-            <div className="mt-5 grid gap-4 text-sm text-amber-100/70 sm:grid-cols-3">
+            <div className="mt-4 grid gap-4 text-sm text-amber-100/70 sm:grid-cols-3">
               <div>
                 <div className="text-[11px] uppercase tracking-[0.3em] text-amber-200/60">Load 1m</div>
                 <div>{metrics ? metrics.cpu.loadAverages[0].toFixed(2) : "--"}</div>
@@ -507,7 +656,7 @@ export default function Home() {
                 <div>{metrics ? metrics.cpu.loadAverages[2].toFixed(2) : "--"}</div>
               </div>
             </div>
-            <div className="mt-4 flex items-center gap-2 text-xs uppercase tracking-[0.3em] text-amber-200/60">
+            <div className="mt-3 flex items-center gap-2 text-xs uppercase tracking-[0.3em] text-amber-200/60">
               <IconClock className="h-4 w-4" />
               <span>Uptime {metrics ? formatUptime(metrics.uptimeSeconds) : "--"}</span>
             </div>
@@ -554,7 +703,7 @@ export default function Home() {
         </section>
 
         <section className="grid gap-4 lg:grid-cols-[1fr_2fr]">
-          <div className="rounded-[24px] border border-orange-500/20 bg-[#120c08]/70 p-5">
+          <div className="rounded-[24px] border border-orange-500/20 bg-[#120c08]/70 p-4">
             <p className="text-xs uppercase tracking-[0.3em] text-amber-200/70">Storage</p>
             <div className="mt-2 text-2xl font-semibold text-amber-100">
               {storageSummary ? `${storageSummary.usedPercent.toFixed(1)}%` : isLoading ? "Loading..." : "--"}
@@ -564,8 +713,13 @@ export default function Home() {
                 ? `${formatBytes(storageSummary.usedBytes)} / ${formatBytes(storageSummary.totalBytes)}`
                 : "--"}
             </div>
-            <div className="mt-4">
-              <LineChart data={storageHistory.length ? storageHistory : [0, 0]} height={150} stroke="#f97316" fill="rgba(249,115,22,0.22)" />
+            <div className="mt-3">
+              <LineChart
+                data={storageHistory.length ? storageHistory : [0, 0]}
+                height={180}
+                stroke="#f97316"
+                fill="rgba(249,115,22,0.22)"
+              />
             </div>
           </div>
 

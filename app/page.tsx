@@ -625,55 +625,50 @@ export default function Home() {
             </div>
             <div className="mt-3">
               <MultiLineChart
-                height={250}
+                height={280}
                 series={[
                   {
                     data: loadHistory.length ? loadHistory : [0, 0],
                     stroke: "#fb923c",
                     strokeWidth: 2.2,
-              fill: "rgba(251,146,60,0.2)",
-              showDot: true,
-            },
-            {
-              data: loadHistory5m.length ? loadHistory5m : [0, 0],
-              stroke: "#f59e0b",
-              strokeWidth: 1.6,
-              fill: "rgba(245,158,11,0.15)",
-            },
-            {
-              data: loadHistory15m.length ? loadHistory15m : [0, 0],
-              stroke: "#fdba74",
-              strokeWidth: 1.6,
-              fill: "rgba(253,186,116,0.12)",
-            },
-          ]}
-        />
-      </div>
-      <div className="mt-2 flex flex-wrap items-center gap-4 text-[11px] uppercase tracking-[0.3em] text-amber-200/60">
-        <div className="flex items-center gap-2">
-          <span className="h-2 w-6 rounded-full bg-[#fb923c]" />
-          <span>Load 1m</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="h-2 w-6 rounded-full bg-[#f59e0b]" />
-          <span>Load 5m</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="h-2 w-6 rounded-full bg-[#fdba74]" />
-          <span>Load 15m</span>
-        </div>
-      </div>
+                    fill: "rgba(251,146,60,0.2)",
+                    showDot: true,
+                  },
+                  {
+                    data: loadHistory5m.length ? loadHistory5m : [0, 0],
+                    stroke: "#f59e0b",
+                    strokeWidth: 1.6,
+                    fill: "rgba(245,158,11,0.15)",
+                  },
+                  {
+                    data: loadHistory15m.length ? loadHistory15m : [0, 0],
+                    stroke: "#fdba74",
+                    strokeWidth: 1.6,
+                    fill: "rgba(253,186,116,0.12)",
+                  },
+                ]}
+              />
+            </div>
             <div className="mt-2 grid gap-4 text-sm text-amber-100/70 sm:grid-cols-3">
               <div>
-                <div className="text-[11px] uppercase tracking-[0.3em] text-amber-200/60">Load 1m</div>
+                <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.3em] text-amber-200/60">
+                  <span className="h-2 w-5 rounded-full bg-[#fb923c]" />
+                  <span>Load 1m</span>
+                </div>
                 <div>{metrics ? metrics.cpu.loadAverages[0].toFixed(2) : "--"}</div>
               </div>
               <div>
-                <div className="text-[11px] uppercase tracking-[0.3em] text-amber-200/60">Load 5m</div>
+                <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.3em] text-amber-200/60">
+                  <span className="h-2 w-5 rounded-full bg-[#f59e0b]" />
+                  <span>Load 5m</span>
+                </div>
                 <div>{metrics ? metrics.cpu.loadAverages[1].toFixed(2) : "--"}</div>
               </div>
               <div>
-                <div className="text-[11px] uppercase tracking-[0.3em] text-amber-200/60">Load 15m</div>
+                <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.3em] text-amber-200/60">
+                  <span className="h-2 w-5 rounded-full bg-[#fdba74]" />
+                  <span>Load 15m</span>
+                </div>
                 <div>{metrics ? metrics.cpu.loadAverages[2].toFixed(2) : "--"}</div>
               </div>
             </div>
@@ -776,7 +771,7 @@ export default function Home() {
             <div className="mt-2">
               <LineChart
                 data={storageHistory.length ? storageHistory : [0, 0]}
-                height={200}
+                height={220}
                 stroke="#f97316"
                 fill="rgba(249,115,22,0.22)"
               />

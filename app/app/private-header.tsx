@@ -120,9 +120,6 @@ export default function PrivateHeader() {
         <h1 className="font-[var(--font-display)] text-2xl text-amber-100 md:text-3xl">
           Private Command Deck
         </h1>
-        <p className="text-sm text-amber-100/70">
-          Services, files, and logs.
-        </p>
         <div className="flex items-center gap-3 text-[11px] uppercase tracking-[0.3em] text-amber-200/70">
           <span>Updated {updatedLabel}</span>
           <button

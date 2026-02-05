@@ -1,6 +1,10 @@
 # ajmsd-ops
 A self-hosted operations dashboard for Aman's Ubuntu server.
 
+## Prerequisites
+- Node.js 20.x (see `.nvmrc`).
+- npm (bundled with Node).
+
 ## Current MVP (Public)
 - Local ops agent (Node/TS) bound to 127.0.0.1
 - Public API proxy routes in Next.js (`/api/public/metrics`, `/api/public/disks`)
@@ -12,10 +16,28 @@ A self-hosted operations dashboard for Aman's Ubuntu server.
 3. Start agent + web together: `npm run dev`
 4. Open `http://localhost:3000`
 
+## Server Deploy (Manual)
+1. Install dependencies: `npm install`
+2. Create `.env` from template and fill required values:
+   - `AUTH_PASSWORD`, `AUTH_SECRET`, `AGENT_TOKEN`
+   - `ALLOWLIST_ROOTS`, `LOG_SOURCES`
+3. Build: `npm run build` and `npm run agent:build`
+4. Start:
+   - Agent: `npm run agent:start`
+   - Web: `npm start`
+5. (Optional) Move to systemd units for auto-start on reboot.
+
 ## Private Access
 - Set `AUTH_PASSWORD` and `AUTH_SECRET` in `.env`.
 - Visit `/login` to authenticate; `/app/*` routes require a valid session.
 - Session duration defaults to 7 days (`AUTH_SESSION_MAX_AGE_SECONDS`).
+
+## Agent Token (AGENT_TOKEN)
+- Generate a long random token:
+  - `openssl rand -hex 32`
+  - `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
+- Set the same token in `.env` for both the agent and the web app.
+- Rotation: generate a new token, update `.env`, and restart both services.
 
 ## Agent Endpoints
 - `GET /health`

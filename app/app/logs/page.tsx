@@ -10,6 +10,7 @@ import type {
 import { fetchJson, formatApiError } from "@/lib/client";
 
 const DEFAULT_LINES = 200;
+const POLL_INTERVAL_MS = 1000;
 
 export default function LogsPage() {
   const [sources, setSources] = useState<LogSourceInfo[]>([]);
@@ -74,8 +75,22 @@ export default function LogsPage() {
 
   useEffect(() => {
     if (!currentSource) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- sync tail with selection
-    void loadTail(currentSource, lines);
+    let mounted = true;
+
+    const poll = async () => {
+      if (!mounted) return;
+      await loadTail(currentSource, lines);
+    };
+
+    void poll();
+    const interval = setInterval(() => {
+      void poll();
+    }, POLL_INTERVAL_MS);
+
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
   }, [currentSource, lines, loadTail]);
 
   useEffect(() => {

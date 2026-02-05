@@ -5,7 +5,7 @@ import Link from "next/link";
 import { IconHeart, IconLock, IconRefresh, IconShield } from "@/app/components/icons";
 import type { DiskInfo, DisksResponse, MetricsResponse } from "@/lib/types";
 
-const POLL_INTERVAL_MS = 100;
+const POLL_INTERVAL_MS = 1000;
 const MAX_HISTORY = 30;
 const CHART_SEGMENTS = 250;
 const SMOOTH_FACTOR = 0.35;
@@ -465,7 +465,7 @@ export default function Home() {
         smoothPush(prev, storageSummary?.usedPercent ?? 0, MAX_HISTORY)
       );
     } catch {
-      setError("Unable to reach the ops agent. Retrying every 100ms.");
+      setError("Unable to reach the ops agent. Retrying every 1s.");
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
@@ -619,7 +619,7 @@ export default function Home() {
             </div>
             <div className="mt-3">
               <MultiLineChart
-                height={300}
+                height={320}
                 series={[
                   {
                     data: loadHistory.length ? loadHistory : [0, 0],
@@ -644,22 +644,22 @@ export default function Home() {
               />
             </div>
             <div className="mt-2 grid gap-4 text-sm text-amber-100/70 sm:grid-cols-3">
-              <div>
-                <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.3em] text-amber-200/60">
+              <div className="text-center">
+                <div className="flex items-center justify-center gap-2 text-[11px] uppercase tracking-[0.3em] text-amber-200/60">
                   <span className="h-2 w-5 rounded-full bg-[#fb923c]" />
                   <span>Load 1m</span>
                 </div>
                 <div>{metrics ? metrics.cpu.loadAverages[0].toFixed(2) : "--"}</div>
               </div>
-              <div>
-                <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.3em] text-amber-200/60">
+              <div className="text-center">
+                <div className="flex items-center justify-center gap-2 text-[11px] uppercase tracking-[0.3em] text-amber-200/60">
                   <span className="h-2 w-5 rounded-full bg-[#f59e0b]" />
                   <span>Load 5m</span>
                 </div>
                 <div>{metrics ? metrics.cpu.loadAverages[1].toFixed(2) : "--"}</div>
               </div>
-              <div>
-                <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.3em] text-amber-200/60">
+              <div className="text-center">
+                <div className="flex items-center justify-center gap-2 text-[11px] uppercase tracking-[0.3em] text-amber-200/60">
                   <span className="h-2 w-5 rounded-full bg-[#fdba74]" />
                   <span>Load 15m</span>
                 </div>

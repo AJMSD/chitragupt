@@ -619,7 +619,7 @@ export default function Home() {
             </div>
             <div className="mt-3">
               <MultiLineChart
-                height={340}
+                height={380}
                 series={[
                   {
                     data: loadHistory.length ? loadHistory : [0, 0],
@@ -761,7 +761,7 @@ export default function Home() {
             <div className="mt-2">
               <LineChart
                 data={storageHistory.length ? storageHistory : [0, 0]}
-                height={240}
+                height={260}
                 stroke="#f97316"
                 fill="rgba(249,115,22,0.22)"
               />

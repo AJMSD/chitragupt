@@ -765,7 +765,7 @@ export default function Home() {
                 height={210}
                 stroke="#f97316"
                 fill="rgba(249,115,22,0.22)"
-                padding={2}
+                padding={1}
               />
             </div>
           </div>

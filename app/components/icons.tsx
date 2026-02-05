@@ -167,17 +167,18 @@ export function IconTerminal(props: IconProps) {
 
 export function IconHeart(props: IconProps) {
   const pixels = [
-    "01100110",
-    "11111111",
-    "11111111",
-    "01111110",
-    "00111100",
-    "00011000",
-    "00000000",
-    "00000000",
+    "011000110",
+    "111101111",
+    "111111111",
+    "111111111",
+    "011111110",
+    "001111100",
+    "000111000",
+    "000010000",
+    "000000000",
   ];
   const pixelSize = 2;
-  const offset = 4;
+  const offset = 3;
 
   return (
     <svg
@@ -202,6 +203,25 @@ export function IconHeart(props: IconProps) {
           ) : null
         )
       )}
+    </svg>
+  );
+}
+
+export function IconClock(props: IconProps) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={cx(props.className)}
+      {...props}
+    >
+      <circle cx="12" cy="12" r="8" />
+      <path d="M12 8v4l3 2" />
     </svg>
   );
 }

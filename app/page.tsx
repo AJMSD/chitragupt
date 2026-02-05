@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState, useId } from "react";
 import Link from "next/link";
 import {
+  IconClock,
   IconHeart,
   IconLock,
   IconRefresh,
@@ -12,9 +13,8 @@ import type { DiskInfo, DisksResponse, MetricsResponse } from "@/lib/types";
 
 const POLL_INTERVAL_MS = 5000;
 const MAX_HISTORY = 30;
-const CHART_SEGMENTS = 50;
-const LAST_MINUTE_SEGMENTS = 10;
-const LAST_MINUTE_POINTS = 12;
+const CHART_SEGMENTS = 250;
+const SMOOTH_FACTOR = 0.35;
 const WARNING_THRESHOLDS = {
   cpu: 90,
   memory: 90,
@@ -92,6 +92,15 @@ function getStorageSummary(disks: DiskInfo[]) {
   return { totalBytes, usedBytes, usedPercent };
 }
 
+function smoothPush(values: number[], nextValue: number, max: number) {
+  if (values.length === 0) {
+    return [nextValue];
+  }
+  const last = values[values.length - 1];
+  const smoothed = last + (nextValue - last) * SMOOTH_FACTOR;
+  return [...values, smoothed].slice(-max);
+}
+
 function interpolateSeries(values: number[], segments: number): number[] {
   if (segments <= 1) return values;
   if (values.length === 0) return Array.from({ length: segments }, () => 0);
@@ -124,13 +133,13 @@ type LineChartProps = {
 
 function LineChart({
   data,
-  height = 160,
+  height = 180,
   stroke = "#fb923c",
   fill = "rgba(251,146,60,0.18)",
   segments = CHART_SEGMENTS,
 }: LineChartProps) {
   const id = useId();
-  const width = 260;
+  const width = 340;
   const series = interpolateSeries(data, segments);
   const safeData = series.length >= 2 ? series : [0, 0];
   const min = Math.min(...safeData);
@@ -187,24 +196,6 @@ function LineChart({
         fill={stroke}
       />
     </svg>
-  );
-}
-
-function MiniBars({ values }: { values: number[] }) {
-  const max = Math.max(...values, 1);
-  return (
-    <div className="flex items-end gap-1">
-      {values.map((value, index) => {
-        const height = Math.max(6, Math.round((value / max) * 28));
-        return (
-          <span
-            key={`slice-${index}`}
-            className="w-2 rounded-full bg-gradient-to-t from-orange-500 to-amber-200"
-            style={{ height }}
-          />
-        );
-      })}
-    </div>
   );
 }
 
@@ -286,10 +277,10 @@ function GpuCard({
       <div className="mt-4">
         <LineChart
           data={percent !== null ? [percent] : [0, 0]}
-          height={110}
+          height={120}
           stroke={stroke}
           fill={fill}
-          segments={20}
+          segments={CHART_SEGMENTS}
         />
       </div>
     </div>
@@ -334,17 +325,17 @@ export default function Home() {
       setError(null);
 
       setLoadHistory((prev) =>
-        [...prev, metricsData.cpu.loadAverages[0] ?? 0].slice(-MAX_HISTORY)
+        smoothPush(prev, metricsData.cpu.loadAverages[0] ?? 0, MAX_HISTORY)
       );
       setCpuHistory((prev) =>
-        [...prev, metricsData.cpu.usagePercent ?? 0].slice(-MAX_HISTORY)
+        smoothPush(prev, metricsData.cpu.usagePercent ?? 0, MAX_HISTORY)
       );
       setMemoryHistory((prev) =>
-        [...prev, metricsData.memory.usedPercent ?? 0].slice(-MAX_HISTORY)
+        smoothPush(prev, metricsData.memory.usedPercent ?? 0, MAX_HISTORY)
       );
       const storageSummary = getStorageSummary(getStorageDisks(disksData.disks ?? []));
       setStorageHistory((prev) =>
-        [...prev, storageSummary?.usedPercent ?? 0].slice(-MAX_HISTORY)
+        smoothPush(prev, storageSummary?.usedPercent ?? 0, MAX_HISTORY)
       );
     } catch {
       setError("Unable to reach the ops agent. Retrying every 5s.");
@@ -429,11 +420,6 @@ export default function Home() {
 
   const lastUpdatedLabel = lastUpdated ? lastUpdated.toLocaleTimeString() : "--";
 
-  const lastMinuteSeries = useMemo(() => {
-    const lastPoints = loadHistory.slice(-LAST_MINUTE_POINTS);
-    return interpolateSeries(lastPoints.length ? lastPoints : [0], LAST_MINUTE_SEGMENTS);
-  }, [loadHistory]);
-
   return (
     <div className="min-h-screen bg-[#090605] text-slate-100">
       <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
@@ -446,10 +432,10 @@ export default function Home() {
         <header className="flex flex-col gap-6 rounded-[32px] border border-orange-500/20 bg-[#120c08]/80 p-8 shadow-[0_20px_60px_rgba(14,8,4,0.65)] md:flex-row md:items-center md:justify-between motion-safe:animate-[fade-up_0.6s_ease-out]">
           <div className="space-y-2">
             <h1 className="font-[var(--font-display)] text-3xl font-semibold text-amber-100 md:text-4xl">
-              AJMSD Ops
+              AJMSD OPS
             </h1>
             <div className="flex items-center gap-3 text-[11px] uppercase tracking-[0.3em] text-amber-200/70">
-              <span>Last updated {lastUpdatedLabel}</span>
+              <span>Updated {lastUpdatedLabel}</span>
               <button
                 className="flex h-9 w-9 items-center justify-center rounded-full border border-orange-400/40 bg-orange-400/10 text-orange-100 transition hover:border-orange-300 hover:bg-orange-400/20"
                 type="button"
@@ -501,13 +487,13 @@ export default function Home() {
                 </h2>
               </div>
               <div className="text-[11px] uppercase tracking-[0.3em] text-amber-200/60">
-                50 segments (last 2.5 minutes)
+                Last 2.5 minutes
               </div>
             </div>
             <div className="mt-6">
-              <LineChart data={loadHistory.length ? loadHistory : [0, 0]} />
+              <LineChart data={loadHistory.length ? loadHistory : [0, 0]} height={200} />
             </div>
-            <div className="mt-4 grid gap-4 text-sm text-amber-100/70 sm:grid-cols-3">
+            <div className="mt-5 grid gap-4 text-sm text-amber-100/70 sm:grid-cols-3">
               <div>
                 <div className="text-[11px] uppercase tracking-[0.3em] text-amber-200/60">Load 1m</div>
                 <div>{metrics ? metrics.cpu.loadAverages[0].toFixed(2) : "--"}</div>
@@ -521,13 +507,9 @@ export default function Home() {
                 <div>{metrics ? metrics.cpu.loadAverages[2].toFixed(2) : "--"}</div>
               </div>
             </div>
-            <div className="mt-4">
-              <div className="text-[11px] uppercase tracking-[0.3em] text-amber-200/60">
-                Last minute (10 slices)
-              </div>
-              <div className="mt-2">
-                <MiniBars values={lastMinuteSeries} />
-              </div>
+            <div className="mt-4 flex items-center gap-2 text-xs uppercase tracking-[0.3em] text-amber-200/60">
+              <IconClock className="h-4 w-4" />
+              <span>Uptime {metrics ? formatUptime(metrics.uptimeSeconds) : "--"}</span>
             </div>
           </div>
 
@@ -538,7 +520,7 @@ export default function Home() {
                 {metrics ? `${metrics.cpu.usagePercent.toFixed(1)}%` : isLoading ? "Loading..." : "--"}
               </div>
               <div className="mt-4">
-                <LineChart data={cpuHistory.length ? cpuHistory : [0, 0]} height={130} />
+                <LineChart data={cpuHistory.length ? cpuHistory : [0, 0]} height={150} />
               </div>
             </div>
 
@@ -548,7 +530,7 @@ export default function Home() {
                 {metrics ? `${metrics.memory.usedPercent.toFixed(1)}%` : isLoading ? "Loading..." : "--"}
               </div>
               <div className="mt-4">
-                <LineChart data={memoryHistory.length ? memoryHistory : [0, 0]} height={130} stroke="#f59e0b" fill="rgba(245,158,11,0.2)" />
+                <LineChart data={memoryHistory.length ? memoryHistory : [0, 0]} height={150} stroke="#f59e0b" fill="rgba(245,158,11,0.2)" />
               </div>
             </div>
           </div>
@@ -583,19 +565,13 @@ export default function Home() {
                 : "--"}
             </div>
             <div className="mt-4">
-              <LineChart data={storageHistory.length ? storageHistory : [0, 0]} height={130} stroke="#f97316" fill="rgba(249,115,22,0.22)" />
-            </div>
-            <div className="mt-4 text-xs text-amber-100/70">
-              Uptime: {metrics ? formatUptime(metrics.uptimeSeconds) : "--"}
+              <LineChart data={storageHistory.length ? storageHistory : [0, 0]} height={150} stroke="#f97316" fill="rgba(249,115,22,0.22)" />
             </div>
           </div>
 
           <div className="rounded-[28px] border border-orange-500/20 bg-[#120c08]/75 p-6">
             <div className="flex items-center justify-between">
               <h2 className="font-[var(--font-display)] text-2xl text-amber-100">Disk Terrain</h2>
-              <span className="text-[11px] uppercase tracking-[0.3em] text-amber-200/60">
-                Updated {lastUpdatedLabel}
-              </span>
             </div>
 
             {storageDisks.length === 0 ? (

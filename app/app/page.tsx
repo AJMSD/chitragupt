@@ -5,7 +5,6 @@ import Link from "next/link";
 import {
   IconFolder,
   IconGrid,
-  IconRefresh,
   IconServer,
   IconTerminal,
 } from "@/app/components/icons";
@@ -59,7 +58,6 @@ export default function PrivateDashboardPage() {
   const [sources, setSources] = useState<LogSourcesResponse | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(true);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   const loadOverview = useCallback(async () => {
     setIsLoading(true);
@@ -98,7 +96,6 @@ export default function PrivateDashboardPage() {
     }
 
     setErrors(nextErrors);
-    setLastUpdated(new Date());
     setIsLoading(false);
   }, []);
 
@@ -120,8 +117,6 @@ export default function PrivateDashboardPage() {
     return { total: units.length, failed };
   }, [systemd]);
 
-  const updatedLabel = lastUpdated ? lastUpdated.toLocaleTimeString() : "--";
-
   return (
     <section className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4 rounded-[28px] border border-orange-500/20 bg-[#120c08]/80 p-6">
@@ -132,20 +127,7 @@ export default function PrivateDashboardPage() {
           <p className="mt-2 text-xs text-amber-100/70">
             Snapshot of services, files, and log sources.
           </p>
-          <p className="mt-1 text-xs uppercase tracking-[0.3em] text-amber-200/60">
-            Updated {updatedLabel}
-          </p>
         </div>
-        <button
-          className="flex h-11 w-11 items-center justify-center rounded-full border border-orange-400/40 bg-orange-400/10 text-orange-100 transition hover:border-orange-300 hover:bg-orange-400/20"
-          type="button"
-          onClick={() => void loadOverview()}
-          disabled={isLoading}
-          aria-label="Refresh overview"
-          title="Refresh overview"
-        >
-          <IconRefresh className="h-5 w-5" />
-        </button>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">

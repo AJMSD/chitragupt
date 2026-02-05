@@ -46,7 +46,6 @@ export default function FilesPage() {
   const [entriesError, setEntriesError] = useState<string | null>(null);
   const [loadingRoots, setLoadingRoots] = useState(true);
   const [loadingEntries, setLoadingEntries] = useState(false);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   const loadRoots = useCallback(async () => {
     setLoadingRoots(true);
@@ -78,7 +77,6 @@ export default function FilesPage() {
     if (result.ok) {
       setEntries(result.data.entries ?? []);
       setEntriesError(null);
-      setLastUpdated(new Date());
     } else {
       setEntriesError(formatApiError(result.error));
       setEntries([]);
@@ -112,8 +110,6 @@ export default function FilesPage() {
     return items;
   }, [currentPath, activeRoot]);
 
-  const updatedLabel = lastUpdated ? lastUpdated.toLocaleTimeString() : "--";
-
   return (
     <section className="space-y-6">
       <div className="rounded-[28px] border border-orange-500/20 bg-[#120c08]/80 p-6">
@@ -123,15 +119,33 @@ export default function FilesPage() {
         <p className="mt-2 text-xs text-amber-100/70">
           Browse allowlisted roots and download files securely.
         </p>
-        <p className="mt-2 text-xs uppercase tracking-[0.3em] text-amber-200/60">
-          Updated {updatedLabel}
-        </p>
       </div>
-
       <div className="rounded-[24px] border border-orange-500/20 bg-[#120c08]/70 p-5">
-        <div className="text-xs uppercase tracking-[0.3em] text-amber-200/70">
-          Roots
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="text-xs uppercase tracking-[0.3em] text-amber-200/70">
+              Vault Navigation
+            </div>
+            <div className="mt-2 text-xs text-amber-100/70">
+              Pick a root, then drill into folders.
+            </div>
+          </div>
+          <button
+            className="flex h-11 w-11 items-center justify-center rounded-full border border-orange-400/40 bg-orange-400/10 text-orange-100 transition hover:border-orange-300 hover:bg-orange-400/20"
+            type="button"
+            onClick={() => {
+              if (currentRoot) {
+                void loadEntries(currentRoot, currentPath);
+              }
+            }}
+            disabled={!currentRoot || loadingEntries}
+            aria-label="Refresh file listing"
+            title="Refresh file listing"
+          >
+            <IconRefresh className="h-5 w-5" />
+          </button>
         </div>
+
         {rootsError ? (
           <div className="mt-3 rounded-2xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
             {rootsError}
@@ -176,41 +190,23 @@ export default function FilesPage() {
             })}
           </div>
         )}
-      </div>
 
-      <div className="rounded-[24px] border border-orange-500/20 bg-[#120c08]/70 p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <div className="text-xs uppercase tracking-[0.3em] text-amber-200/70">
-              Location
-            </div>
-            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-amber-100/80">
-              {breadcrumbs.map((crumb, index) => (
-                <button
-                  key={crumb.path}
-                  type="button"
-                  onClick={() => setCurrentPath(crumb.path)}
-                  className="rounded-full border border-orange-500/20 px-3 py-1 text-[10px] uppercase tracking-[0.3em] text-amber-100/70 transition hover:border-orange-400/60 hover:text-amber-100"
-                >
-                  {index === 0 ? "Home" : crumb.label}
-                </button>
-              ))}
-            </div>
+        <div className="mt-6">
+          <div className="text-xs uppercase tracking-[0.3em] text-amber-200/70">
+            Location
           </div>
-          <button
-            className="flex h-11 w-11 items-center justify-center rounded-full border border-orange-400/40 bg-orange-400/10 text-orange-100 transition hover:border-orange-300 hover:bg-orange-400/20"
-            type="button"
-            onClick={() => {
-              if (currentRoot) {
-                void loadEntries(currentRoot, currentPath);
-              }
-            }}
-            disabled={!currentRoot || loadingEntries}
-            aria-label="Refresh file listing"
-            title="Refresh file listing"
-          >
-            <IconRefresh className="h-5 w-5" />
-          </button>
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-amber-100/80">
+            {breadcrumbs.map((crumb, index) => (
+              <button
+                key={crumb.path}
+                type="button"
+                onClick={() => setCurrentPath(crumb.path)}
+                className="rounded-full border border-orange-500/20 px-3 py-1 text-[10px] uppercase tracking-[0.3em] text-amber-100/70 transition hover:border-orange-400/60 hover:text-amber-100"
+              >
+                {index === 0 ? "Home" : crumb.label}
+              </button>
+            ))}
+          </div>
         </div>
 
         {entriesError ? (

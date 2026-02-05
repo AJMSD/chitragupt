@@ -20,7 +20,6 @@ export default function LogsPage() {
   const [tailError, setTailError] = useState<string | null>(null);
   const [loadingSources, setLoadingSources] = useState(true);
   const [loadingTail, setLoadingTail] = useState(false);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const logRef = useRef<HTMLPreElement | null>(null);
 
   const loadSources = useCallback(async () => {
@@ -54,7 +53,6 @@ export default function LogsPage() {
     if (result.ok) {
       setContent(result.data.content ?? "");
       setTailError(null);
-      setLastUpdated(new Date());
     } else {
       setTailError(formatApiError(result.error));
       setContent("");
@@ -83,8 +81,6 @@ export default function LogsPage() {
     [sources, currentSource]
   );
 
-  const updatedLabel = lastUpdated ? lastUpdated.toLocaleTimeString() : "--";
-
   return (
     <section className="space-y-6">
       <div className="rounded-[28px] border border-orange-500/20 bg-[#120c08]/80 p-6">
@@ -93,9 +89,6 @@ export default function LogsPage() {
         </h2>
         <p className="mt-2 text-xs text-amber-100/70">
           Tail logs for allowlisted services and containers.
-        </p>
-        <p className="mt-2 text-xs uppercase tracking-[0.3em] text-amber-200/60">
-          Updated {updatedLabel}
         </p>
       </div>
 

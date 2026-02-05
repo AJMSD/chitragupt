@@ -67,7 +67,6 @@ export default function ServicesPage() {
   const [systemdError, setSystemdError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   const loadData = useCallback(async (refresh = false) => {
     if (refresh) {
@@ -95,7 +94,6 @@ export default function ServicesPage() {
       setSystemdError(formatApiError(systemdResult.error));
     }
 
-    setLastUpdated(new Date());
     setIsLoading(false);
     setIsRefreshing(false);
   }, []);
@@ -142,8 +140,6 @@ export default function ServicesPage() {
     ? "error"
     : "ok";
 
-  const updatedLabel = lastUpdated ? lastUpdated.toLocaleTimeString() : "--";
-
   return (
     <section className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4 rounded-[28px] border border-orange-500/20 bg-[#120c08]/80 p-6">
@@ -153,9 +149,6 @@ export default function ServicesPage() {
           </h2>
           <p className="mt-2 text-sm text-amber-100/70">
             Live status for Docker containers and systemd units.
-          </p>
-          <p className="mt-1 text-xs uppercase tracking-[0.3em] text-amber-200/60">
-            Updated {updatedLabel}
           </p>
         </div>
         <button

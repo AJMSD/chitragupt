@@ -3,13 +3,12 @@ import { cookies } from "next/headers";
 import Link from "next/link";
 import {
   IconFolder,
-  IconGlobe,
   IconGrid,
-  IconPower,
   IconServer,
   IconTerminal,
 } from "@/app/components/icons";
 import { SESSION_COOKIE_NAME, verifySessionToken } from "@/lib/auth";
+import PrivateHeader from "@/app/app/private-header";
 
 export const dynamic = "force-dynamic";
 
@@ -34,41 +33,7 @@ export default async function AppLayout({
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(251,146,60,0.18),_transparent_55%),radial-gradient(circle_at_bottom,_rgba(249,115,22,0.18),_transparent_60%)]" />
       </div>
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 py-8">
-        <header className="flex flex-col gap-4 rounded-[28px] border border-orange-500/20 bg-[#120c08]/80 p-6 md:flex-row md:items-center md:justify-between">
-          <div className="space-y-2">
-            <p className="text-xs uppercase tracking-[0.4em] text-amber-200/70">
-              ajmsd-ops
-            </p>
-            <h1 className="font-[var(--font-display)] text-2xl text-amber-100">
-              Private Command Deck
-            </h1>
-            <p className="text-sm text-amber-100/70">
-              Services, files, and logs in a single warm glow.
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            <Link
-              className="flex h-11 w-11 items-center justify-center rounded-full border border-orange-400/40 bg-orange-400/10 text-orange-100 transition hover:border-orange-300 hover:bg-orange-400/20"
-              href="/"
-              aria-label="Public overview"
-              title="Public overview"
-            >
-              <IconGlobe className="h-5 w-5" />
-              <span className="sr-only">Public overview</span>
-            </Link>
-            <form action="/api/auth/logout" method="post">
-              <button
-                className="flex h-11 w-11 items-center justify-center rounded-full border border-orange-400/40 bg-orange-400/10 text-orange-100 transition hover:border-orange-300 hover:bg-orange-400/20"
-                type="submit"
-                aria-label="Sign out"
-                title="Sign out"
-              >
-                <IconPower className="h-5 w-5" />
-                <span className="sr-only">Sign out</span>
-              </button>
-            </form>
-          </div>
-        </header>
+        <PrivateHeader />
 
         <nav className="flex flex-wrap gap-3">
           <Link

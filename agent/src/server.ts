@@ -73,6 +73,27 @@ type DiskInfo = {
   driveType: "ssd" | "hdd" | "unknown";
 };
 
+const EXTERNAL_DRIVE_VALIDATION_TARGETS = [
+  { mount: "/mnt/Extreme500", expectedDriveType: "ssd" },
+  { mount: "/mnt/PortableSSD", expectedDriveType: "ssd" },
+] as const;
+
+type ExternalDriveValidationStatus = "ok" | "missing" | "mismatch";
+
+type ExternalDriveValidationTarget = {
+  mount: string;
+  expectedDriveType: DiskInfo["driveType"];
+  actualDriveType: DiskInfo["driveType"] | null;
+  status: ExternalDriveValidationStatus;
+  filesystem: string | null;
+  sizeBytes: number | null;
+};
+
+type ExternalDriveValidation = {
+  ok: boolean;
+  targets: ExternalDriveValidationTarget[];
+};
+
 type GpuInfo = {
   name: string;
   utilizationPercent: number | null;
@@ -191,6 +212,38 @@ function toBytes(value: string): number {
 function toMiBBytes(value: string): number | null {
   const parsed = Number.parseFloat(value);
   return Number.isFinite(parsed) ? parsed * 1024 * 1024 : null;
+}
+
+function validateExternalDrives(disks: DiskInfo[]): ExternalDriveValidation {
+  const targets = EXTERNAL_DRIVE_VALIDATION_TARGETS.map((target) => {
+    const match = disks.find((disk) => disk.mount === target.mount);
+    if (!match) {
+      return {
+        mount: target.mount,
+        expectedDriveType: target.expectedDriveType,
+        actualDriveType: null,
+        status: "missing",
+        filesystem: null,
+        sizeBytes: null,
+      } satisfies ExternalDriveValidationTarget;
+    }
+
+    const actualDriveType = match.driveType ?? "unknown";
+    const status: ExternalDriveValidationStatus =
+      actualDriveType === target.expectedDriveType ? "ok" : "mismatch";
+
+    return {
+      mount: target.mount,
+      expectedDriveType: target.expectedDriveType,
+      actualDriveType,
+      status,
+      filesystem: match.filesystem ?? null,
+      sizeBytes: Number.isFinite(match.sizeBytes) ? match.sizeBytes : null,
+    } satisfies ExternalDriveValidationTarget;
+  });
+
+  const ok = targets.every((target) => target.status !== "mismatch");
+  return { ok, targets };
 }
 
 async function getGpuInfo(): Promise<GpuInfo> {
@@ -1436,9 +1489,11 @@ const server = http.createServer(async (req, res) => {
 
     if (url.pathname === "/disks") {
       const disks = await getDisks();
+      const validation = validateExternalDrives(disks);
       sendJson(res, 200, {
         timestamp: new Date().toISOString(),
         disks,
+        validation,
       });
       logRequest(method, url.pathname, 200, startTime);
       return;

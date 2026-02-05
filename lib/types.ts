@@ -43,9 +43,26 @@ export type DiskInfo = {
   driveType: "ssd" | "hdd" | "unknown";
 };
 
+export type ExternalDriveValidationStatus = "ok" | "missing" | "mismatch";
+
+export type ExternalDriveValidationTarget = {
+  mount: string;
+  expectedDriveType: DiskInfo["driveType"];
+  actualDriveType: DiskInfo["driveType"] | null;
+  status: ExternalDriveValidationStatus;
+  filesystem: string | null;
+  sizeBytes: number | null;
+};
+
+export type ExternalDriveValidation = {
+  ok: boolean;
+  targets: ExternalDriveValidationTarget[];
+};
+
 export type DisksResponse = {
   timestamp: string;
   disks: DiskInfo[];
+  validation?: ExternalDriveValidation;
 };
 
 export type DockerContainerInfo = {

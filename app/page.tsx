@@ -125,6 +125,7 @@ type LineChartProps = {
   stroke?: string;
   fill?: string;
   segments?: number;
+  padding?: number;
 };
 
 function LineChart({
@@ -133,6 +134,7 @@ function LineChart({
   stroke = "#fb923c",
   fill = "rgba(251,146,60,0.18)",
   segments = CHART_SEGMENTS,
+  padding = CHART_PADDING,
 }: LineChartProps) {
   const id = useId();
   const width = CHART_WIDTH;
@@ -141,7 +143,6 @@ function LineChart({
   const min = Math.min(...safeData);
   const max = Math.max(...safeData);
   const range = max - min || 1;
-  const padding = CHART_PADDING;
   const points = safeData.map((value, index) => {
     const x = padding + (index / (safeData.length - 1)) * (width - padding * 2);
     const y = padding + (1 - (value - min) / range) * (height - padding * 2);
@@ -764,6 +765,7 @@ export default function Home() {
                 height={210}
                 stroke="#f97316"
                 fill="rgba(249,115,22,0.22)"
+                padding={2}
               />
             </div>
           </div>

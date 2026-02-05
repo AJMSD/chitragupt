@@ -210,7 +210,7 @@ export default function LogsPage() {
           </label>
           <div className="flex items-center gap-2 rounded-2xl border border-orange-500/30 bg-black/40 px-3 py-2">
             <input
-              className="w-20 appearance-none bg-transparent text-sm text-amber-50 focus:outline-none"
+              className="no-number-spin w-20 appearance-none bg-transparent text-sm text-amber-50 focus:outline-none"
               type="number"
               min={50}
               max={500}
@@ -220,7 +220,6 @@ export default function LogsPage() {
                 const value = Number(event.target.value);
                 setLines(clampLines(value));
               }}
-              style={{ WebkitAppearance: "none", MozAppearance: "textfield" }}
             />
             <div className="flex flex-col">
               <button

@@ -42,6 +42,16 @@ body {
   scrollbar-color: rgba(251, 146, 60, 0.45) rgba(10, 6, 4, 0.6);
 }
 
+.no-number-spin::-webkit-outer-spin-button,
+.no-number-spin::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.no-number-spin {
+  -moz-appearance: textfield;
+}
+
 @keyframes fade-up {
   from {
     opacity: 0;

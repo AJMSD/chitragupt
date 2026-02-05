@@ -10,7 +10,7 @@ import {
 } from "@/app/components/icons";
 import type { DiskInfo, DisksResponse, MetricsResponse } from "@/lib/types";
 
-const POLL_INTERVAL_MS = 5000;
+const POLL_INTERVAL_MS = 100;
 const WARNING_THRESHOLDS = {
   cpu: 90,
   memory: 90,

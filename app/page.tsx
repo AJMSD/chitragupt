@@ -2,16 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useState, useId } from "react";
 import Link from "next/link";
-import {
-  IconClock,
-  IconHeart,
-  IconLock,
-  IconRefresh,
-  IconShield,
-} from "@/app/components/icons";
+import { IconHeart, IconLock, IconRefresh, IconShield } from "@/app/components/icons";
 import type { DiskInfo, DisksResponse, MetricsResponse } from "@/lib/types";
 
-const POLL_INTERVAL_MS = 5000;
+const POLL_INTERVAL_MS = 100;
 const MAX_HISTORY = 30;
 const CHART_SEGMENTS = 250;
 const SMOOTH_FACTOR = 0.35;
@@ -471,7 +465,7 @@ export default function Home() {
         smoothPush(prev, storageSummary?.usedPercent ?? 0, MAX_HISTORY)
       );
     } catch {
-      setError("Unable to reach the ops agent. Retrying every 5s.");
+      setError("Unable to reach the ops agent. Retrying every 100ms.");
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
@@ -615,17 +609,17 @@ export default function Home() {
                 <p className="text-xs uppercase tracking-[0.3em] text-amber-200/70">
                   Load Timeline
                 </p>
-                <h2 className="mt-2 font-[var(--font-display)] text-2xl text-amber-100">
+                <h2 className="mt-2 font-[var(--font-display)] text-xl text-amber-100 md:text-2xl">
                   {metrics ? metrics.cpu.name : isLoading ? "Loading..." : "Unknown"}
                 </h2>
               </div>
               <div className="text-[11px] uppercase tracking-[0.3em] text-amber-200/60">
-                Last 2.5 minutes
+                Uptime {metrics ? formatUptime(metrics.uptimeSeconds) : "--"}
               </div>
             </div>
             <div className="mt-3">
               <MultiLineChart
-                height={280}
+                height={300}
                 series={[
                   {
                     data: loadHistory.length ? loadHistory : [0, 0],
@@ -671,10 +665,6 @@ export default function Home() {
                 </div>
                 <div>{metrics ? metrics.cpu.loadAverages[2].toFixed(2) : "--"}</div>
               </div>
-            </div>
-            <div className="mt-3 flex items-center gap-2 text-xs uppercase tracking-[0.3em] text-amber-200/60">
-              <IconClock className="h-4 w-4" />
-              <span>Uptime {metrics ? formatUptime(metrics.uptimeSeconds) : "--"}</span>
             </div>
           </div>
 
@@ -771,7 +761,7 @@ export default function Home() {
             <div className="mt-2">
               <LineChart
                 data={storageHistory.length ? storageHistory : [0, 0]}
-                height={220}
+                height={240}
                 stroke="#f97316"
                 fill="rgba(249,115,22,0.22)"
               />

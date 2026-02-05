@@ -21,6 +21,8 @@ export default function LogsPage() {
   const [loadingSources, setLoadingSources] = useState(true);
   const [loadingTail, setLoadingTail] = useState(false);
   const logRef = useRef<HTMLPreElement | null>(null);
+  const dropdownRef = useRef<HTMLDivElement | null>(null);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   const clampLines = useCallback((value: number) => {
     if (!Number.isFinite(value)) return DEFAULT_LINES;
@@ -81,6 +83,18 @@ export default function LogsPage() {
     logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [content]);
 
+  useEffect(() => {
+    if (!isMenuOpen) return;
+    const handleClick = (event: MouseEvent) => {
+      if (!dropdownRef.current) return;
+      if (!dropdownRef.current.contains(event.target as Node)) {
+        setIsMenuOpen(false);
+      }
+    };
+    window.addEventListener("mousedown", handleClick);
+    return () => window.removeEventListener("mousedown", handleClick);
+  }, [isMenuOpen]);
+
   const activeSource = useMemo(
     () => sources.find((source) => source.id === currentSource) ?? null,
     [sources, currentSource]
@@ -113,19 +127,56 @@ export default function LogsPage() {
           </div>
         ) : (
           <div className="mt-3 flex flex-wrap items-center gap-3">
-            <div className="relative">
-              <select
-                className="appearance-none rounded-2xl border border-orange-500/30 bg-black/40 py-2 pl-4 pr-10 text-sm text-amber-50 focus:border-orange-300/70 focus:outline-none"
-                value={currentSource}
-                onChange={(event) => setCurrentSource(event.target.value)}
+            <div ref={dropdownRef} className="relative">
+              <button
+                className="flex min-w-[220px] items-center justify-between gap-3 rounded-2xl border border-orange-500/30 bg-black/40 px-4 py-2 text-sm text-amber-50 transition hover:border-orange-300/70"
+                type="button"
+                onClick={() => setIsMenuOpen((prev) => !prev)}
+                aria-haspopup="listbox"
+                aria-expanded={isMenuOpen}
               >
-                {sources.map((source) => (
-                  <option key={source.id} value={source.id}>
-                    {source.label}
-                  </option>
-                ))}
-              </select>
-              <IconArrowRight className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 rotate-90 text-amber-200/70" />
+                <span className="truncate">
+                  {activeSource?.label ?? "Select source"}
+                </span>
+                <IconArrowRight
+                  className={`h-4 w-4 text-amber-200/70 transition ${
+                    isMenuOpen ? "-rotate-90" : "rotate-90"
+                  }`}
+                />
+              </button>
+              {isMenuOpen ? (
+                <div className="absolute z-20 mt-2 w-full rounded-2xl border border-orange-500/40 bg-[#120c08] p-2 shadow-[0_16px_40px_rgba(6,4,2,0.7)]">
+                  <div className="max-h-64 overflow-y-auto themed-scrollbar">
+                    {sources.map((source) => {
+                      const isActive = source.id === currentSource;
+                      return (
+                        <button
+                          key={source.id}
+                          type="button"
+                          className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm transition ${
+                            isActive
+                              ? "bg-orange-400/15 text-amber-100"
+                              : "text-amber-100/80 hover:bg-orange-400/10 hover:text-amber-100"
+                          }`}
+                          onClick={() => {
+                            setCurrentSource(source.id);
+                            setIsMenuOpen(false);
+                          }}
+                          role="option"
+                          aria-selected={isActive}
+                        >
+                          <span className="truncate">{source.label}</span>
+                          {isActive ? (
+                            <span className="text-[10px] uppercase tracking-[0.3em] text-amber-200/70">
+                              Active
+                            </span>
+                          ) : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
             </div>
             {activeSource ? (
               <div className="flex items-center gap-2 text-xs uppercase tracking-[0.3em] text-amber-200/60">
@@ -169,6 +220,7 @@ export default function LogsPage() {
                 const value = Number(event.target.value);
                 setLines(clampLines(value));
               }}
+              style={{ WebkitAppearance: "none", MozAppearance: "textfield" }}
             />
             <div className="flex flex-col">
               <button

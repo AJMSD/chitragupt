@@ -761,7 +761,7 @@ export default function Home() {
             <div className="mt-2">
               <LineChart
                 data={storageHistory.length ? storageHistory : [0, 0]}
-                height={300}
+                height={280}
                 stroke="#f97316"
                 fill="rgba(249,115,22,0.22)"
               />

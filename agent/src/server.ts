@@ -73,7 +73,9 @@ type DiskInfo = {
   driveType: "ssd" | "hdd" | "unknown";
 };
 
-const EXTERNAL_DRIVE_VALIDATION_TARGETS = [
+const EXTERNAL_DRIVE_VALIDATION_RAW =
+  process.env.EXTERNAL_DRIVE_VALIDATION ?? "";
+const DEFAULT_EXTERNAL_DRIVE_VALIDATION_TARGETS = [
   { mount: "/mnt/Extreme500", expectedDriveType: "ssd" },
   { mount: "/mnt/PortableSSD", expectedDriveType: "ssd" },
 ] as const;
@@ -214,8 +216,41 @@ function toMiBBytes(value: string): number | null {
   return Number.isFinite(parsed) ? parsed * 1024 * 1024 : null;
 }
 
+function parseExternalDriveValidationTargets() {
+  if (!EXTERNAL_DRIVE_VALIDATION_RAW.trim()) {
+    return [...DEFAULT_EXTERNAL_DRIVE_VALIDATION_TARGETS];
+  }
+  try {
+    const parsed = JSON.parse(EXTERNAL_DRIVE_VALIDATION_RAW) as unknown;
+    if (Array.isArray(parsed)) {
+      return parsed
+        .map((entry) => {
+          if (!entry || typeof entry !== "object") return null;
+          const rawMount = String(
+            (entry as { mount?: string }).mount ?? ""
+          ).trim();
+          const rawType = String(
+            (entry as { expectedDriveType?: string }).expectedDriveType ?? ""
+          ).trim();
+          if (!rawMount) return null;
+          if (rawType !== "ssd" && rawType !== "hdd" && rawType !== "unknown") {
+            return null;
+          }
+          return { mount: rawMount, expectedDriveType: rawType as DiskInfo["driveType"] };
+        })
+        .filter(
+          (entry): entry is { mount: string; expectedDriveType: DiskInfo["driveType"] } =>
+            Boolean(entry)
+        );
+    }
+  } catch {
+    console.warn("Failed to parse EXTERNAL_DRIVE_VALIDATION");
+  }
+  return [...DEFAULT_EXTERNAL_DRIVE_VALIDATION_TARGETS];
+}
+
 function validateExternalDrives(disks: DiskInfo[]): ExternalDriveValidation {
-  const targets = EXTERNAL_DRIVE_VALIDATION_TARGETS.map((target) => {
+  const targets = parseExternalDriveValidationTargets().map((target) => {
     const match = disks.find((disk) => disk.mount === target.mount);
     if (!match) {
       return {

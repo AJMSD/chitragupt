@@ -5,7 +5,7 @@ import Link from "next/link";
 import { IconHeart, IconLock, IconRefresh, IconShield } from "@/app/components/icons";
 import type { DiskInfo, DisksResponse, MetricsResponse } from "@/lib/types";
 
-const POLL_INTERVAL_MS = 5000;
+const POLL_INTERVAL_MS = 1000;
 const MAX_HISTORY = 30;
 const CHART_SEGMENTS = 250;
 const SMOOTH_FACTOR = 0.35;
@@ -466,7 +466,7 @@ export default function Home() {
         smoothPush(prev, storageSummary?.usedPercent ?? 0, MAX_HISTORY)
       );
     } catch {
-      setError("Unable to reach the ops agent. Retrying every 5s.");
+      setError("Unable to reach the ops agent. Retrying every 1s.");
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);

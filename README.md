@@ -27,6 +27,54 @@ A self-hosted operations dashboard for Aman's Ubuntu server.
    - Web: `npm start`
 5. (Optional) Move to systemd units for auto-start on reboot.
 
+## Systemd Services (Production)
+Service unit examples live in `systemd/`.
+
+1. Build the app and agent:
+   - `npm run build`
+   - `npm run agent:build`
+2. Copy unit files:
+   - `sudo cp systemd/ajmsd-ops-agent.service /etc/systemd/system/`
+   - `sudo cp systemd/ajmsd-ops-web.service /etc/systemd/system/`
+3. Edit the units if needed:
+   - `User`, `WorkingDirectory`, `EnvironmentFile`, `ExecStart`
+4. Reload + enable:
+   - `sudo systemctl daemon-reload`
+   - `sudo systemctl enable --now ajmsd-ops-agent`
+   - `sudo systemctl enable --now ajmsd-ops-web`
+5. Check logs:
+   - `journalctl -u ajmsd-ops-agent -f`
+   - `journalctl -u ajmsd-ops-web -f`
+
+## Cloudflare Tunnel (Production)
+This uses a named tunnel + custom domain (e.g., `ops.ajmsd.space`).
+
+1. Login and create tunnel:
+   - `cloudflared tunnel login`
+   - `cloudflared tunnel create ajmsd-ops`
+2. Route DNS:
+   - `cloudflared tunnel route dns ajmsd-ops ops.ajmsd.space`
+3. Create config:
+   - Copy `cloudflared/config.yml.example` to `~/.cloudflared/config.yml`
+   - Set the tunnel UUID and credentials file path
+4. Run:
+   - `cloudflared tunnel run ajmsd-ops`
+5. Run as a service (optional but recommended):
+   - `sudo cloudflared service install`
+   - `sudo systemctl enable --now cloudflared`
+
+## Cloudflare Access Policies
+Define two Access policies for the same app:
+
+1. **Public policy** (no login required)
+   - Paths: `/` and `/public/*`
+   - Action: Allow
+2. **Private policy** (login required)
+   - Paths: `/app/*`
+   - Action: Require
+
+Keep app-level auth in place even with Access enabled.
+
 ## Troubleshooting
 - **Public page shows agent unavailable**
   - Confirm the agent is running and bound to `127.0.0.1`.

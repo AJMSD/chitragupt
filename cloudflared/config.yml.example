@@ -1,0 +1,6 @@
+tunnel: <TUNNEL_UUID>
+credentials-file: /home/ajmsd/.cloudflared/<TUNNEL_UUID>.json
+ingress:
+  - hostname: ops.ajmsd.space
+    service: http://localhost:3000
+  - service: http_status:404

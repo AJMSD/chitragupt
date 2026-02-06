@@ -1,0 +1,18 @@
+[Unit]
+Description=AJMSD Ops Web
+After=network.target
+
+[Service]
+Type=simple
+User=ajmsd
+WorkingDirectory=/home/ajmsd/Code/ajmsd-ops
+EnvironmentFile=/home/ajmsd/Code/ajmsd-ops/.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/npm start
+Restart=on-failure
+RestartSec=3
+KillSignal=SIGINT
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

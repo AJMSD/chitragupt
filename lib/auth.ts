@@ -69,6 +69,12 @@ function encodeString(value: string): Uint8Array {
   return encoder.encode(value);
 }
 
+function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const buffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buffer).set(bytes);
+  return buffer;
+}
+
 function decodeString(bytes: Uint8Array): string {
   return decoder.decode(bytes);
 }
@@ -89,7 +95,7 @@ async function hmacSha256(secret: string, data: string): Promise<Uint8Array> {
 
   const key = await globalThis.crypto.subtle.importKey(
     "raw",
-    encodeString(secret),
+    toArrayBuffer(encodeString(secret)),
     { name: "HMAC", hash: "SHA-256" },
     false,
     ["sign"]
@@ -98,7 +104,7 @@ async function hmacSha256(secret: string, data: string): Promise<Uint8Array> {
   const signature = await globalThis.crypto.subtle.sign(
     "HMAC",
     key,
-    encodeString(data)
+    toArrayBuffer(encodeString(data))
   );
 
   return new Uint8Array(signature);

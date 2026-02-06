@@ -25,55 +25,7 @@ A self-hosted operations dashboard for Aman's Ubuntu server.
 4. Start:
    - Agent: `npm run agent:start`
    - Web: `npm start`
-5. (Optional) Move to systemd units for auto-start on reboot.
-
-## Systemd Services (Production)
-Service unit examples live in `systemd/`.
-
-1. Build the app and agent:
-   - `npm run build`
-   - `npm run agent:build`
-2. Copy unit files:
-   - `sudo cp systemd/ajmsd-ops-agent.service /etc/systemd/system/`
-   - `sudo cp systemd/ajmsd-ops-web.service /etc/systemd/system/`
-3. Edit the units if needed:
-   - `User`, `WorkingDirectory`, `EnvironmentFile`, `ExecStart`
-4. Reload + enable:
-   - `sudo systemctl daemon-reload`
-   - `sudo systemctl enable --now ajmsd-ops-agent`
-   - `sudo systemctl enable --now ajmsd-ops-web`
-5. Check logs:
-   - `journalctl -u ajmsd-ops-agent -f`
-   - `journalctl -u ajmsd-ops-web -f`
-
-## Cloudflare Tunnel (Production)
-This uses a named tunnel + custom domain (e.g., `ops.ajmsd.space`).
-
-1. Login and create tunnel:
-   - `cloudflared tunnel login`
-   - `cloudflared tunnel create ajmsd-ops`
-2. Route DNS:
-   - `cloudflared tunnel route dns ajmsd-ops ops.ajmsd.space`
-3. Create config:
-   - Copy `cloudflared/config.yml.example` to `~/.cloudflared/config.yml`
-   - Set the tunnel UUID and credentials file path
-4. Run:
-   - `cloudflared tunnel run ajmsd-ops`
-5. Run as a service (optional but recommended):
-   - `sudo cloudflared service install`
-   - `sudo systemctl enable --now cloudflared`
-
-## Cloudflare Access Policies
-Define two Access policies for the same app:
-
-1. **Public policy** (no login required)
-   - Paths: `/` and `/public/*`
-   - Action: Allow
-2. **Private policy** (login required)
-   - Paths: `/app/*`
-   - Action: Require
-
-Keep app-level auth in place even with Access enabled.
+5. (Optional) Use a process manager (systemd, pm2, etc.) for auto-start on reboot.
 
 ## Troubleshooting
 - **Public page shows agent unavailable**
@@ -88,15 +40,14 @@ Keep app-level auth in place even with Access enabled.
   - Confirm headers match `AGENT_TOKEN_HEADER`, `AGENT_PRIVATE_HEADER`, and `AGENT_PRIVATE_VALUE`.
 - **Docker/systemd endpoints fail**
   - Confirm the agent user has permission to access Docker or systemd.
-  - Check `journalctl` for service errors if using systemd units.
+  - Check your process manager logs for service errors.
 
 ## Safe Update & Rollback Checklist
 1. Pull latest code and review diffs: `git pull --ff-only`
 2. Install dependencies: `npm install`
 3. Build: `npm run build` and `npm run agent:build`
 4. Restart services:
-   - Manual: stop/start both agent and web processes
-   - Systemd: `sudo systemctl restart ajmsd-ops-agent ajmsd-ops-web`
+   - Stop/start both agent and web processes
 5. Verify:
    - Public page loads and updates
    - Private login works
@@ -139,7 +90,7 @@ Keep app-level auth in place even with Access enabled.
 - See `.env.example` for sample values.
 
 ## Notes
-- The public dashboard polls every 5 seconds.
+- The public dashboard polls every 1 second.
 - The agent uses Node's built-in `http` server to avoid extra dependencies.
 - The agent and web both load environment variables from `.env`.
 - If the agent runs on a different port, set `AGENT_URL` accordingly.

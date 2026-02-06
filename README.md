@@ -89,6 +89,12 @@ A self-hosted operations dashboard for Aman's Ubuntu server.
 - `LOG_SOURCES` defines log sources (docker, systemd, or file).
 - See `.env.example` for sample values.
 
+## More Ideas (Post-MVP)
+- Add alerting for disk/service health (email, webhook, or chat).
+- Add safe actions (restart container/service) with an audit log.
+- Persist metrics history for long-term charts and trend views.
+- Add multi-user roles and access controls.
+
 ## Notes
 - The public dashboard polls every 1 second.
 - The agent uses Node's built-in `http` server to avoid extra dependencies.

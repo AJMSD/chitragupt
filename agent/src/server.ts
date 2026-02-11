@@ -18,7 +18,7 @@ const AGENT_TOKEN_HEADER = (
   process.env.AGENT_TOKEN_HEADER ?? "x-agent-token"
 ).toLowerCase();
 const AGENT_PRIVATE_HEADER = (
-  process.env.AGENT_PRIVATE_HEADER ?? "x-ajmsd-private"
+  process.env.AGENT_PRIVATE_HEADER ?? "x-chitragupt-private"
 ).toLowerCase();
 const AGENT_PRIVATE_VALUE = process.env.AGENT_PRIVATE_VALUE ?? "1";
 const ALLOWLIST_ROOTS_RAW = process.env.ALLOWLIST_ROOTS ?? "[]";

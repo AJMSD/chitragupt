@@ -1,4 +1,4 @@
-# ajmsd-ops
+﻿# chitragupt
 A self-hosted operations dashboard for Aman's Ubuntu server.
 
 ## Prerequisites

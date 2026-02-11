@@ -1,10 +1,10 @@
-const DEFAULT_AGENT_URL = "http://127.0.0.1:7777";
+﻿const DEFAULT_AGENT_URL = "http://127.0.0.1:7777";
 const AGENT_TOKEN = process.env.AGENT_TOKEN ?? "";
 const AGENT_TOKEN_HEADER = (
   process.env.AGENT_TOKEN_HEADER ?? "x-agent-token"
 ).toLowerCase();
 const AGENT_PRIVATE_HEADER = (
-  process.env.AGENT_PRIVATE_HEADER ?? "x-ajmsd-private"
+  process.env.AGENT_PRIVATE_HEADER ?? "x-chitragupt-private"
 ).toLowerCase();
 const AGENT_PRIVATE_VALUE = process.env.AGENT_PRIVATE_VALUE ?? "1";
 const PRIVATE_PATH_PREFIXES = ["/docker", "/systemd", "/files", "/logs"] as const;

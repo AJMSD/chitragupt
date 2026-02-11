@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -115,7 +115,7 @@ export default function PrivateHeader() {
     <header className="flex flex-col gap-6 rounded-[32px] border border-orange-500/20 bg-[#120c08]/80 p-8 shadow-[0_20px_60px_rgba(14,8,4,0.65)] md:flex-row md:items-center md:justify-between motion-safe:animate-[fade-up_0.6s_ease-out]">
       <div className="space-y-2">
         <p className="text-xs uppercase tracking-[0.4em] text-amber-200/70">
-          AJMSD OPS
+          CHITRAGUPT
         </p>
         <h1 className="font-[var(--font-display)] text-2xl text-amber-100 md:text-3xl">
           Private Command Deck

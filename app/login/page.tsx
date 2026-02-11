@@ -1,4 +1,4 @@
-import Link from "next/link";
+﻿import Link from "next/link";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { IconArrowRight, IconLock } from "@/app/components/icons";
@@ -50,7 +50,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
         <div className="w-full max-w-md rounded-[32px] border border-orange-500/25 bg-[#120c08]/80 p-8 shadow-[0_20px_60px_rgba(10,6,4,0.65)]">
           <div className="space-y-3">
             <p className="text-xs uppercase tracking-[0.4em] text-amber-200/70">
-              ajmsd-ops
+              CHITRAGUPT
             </p>
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-full border border-orange-400/40 bg-orange-400/10 text-orange-100">

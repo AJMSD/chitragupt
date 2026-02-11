@@ -1,4 +1,4 @@
-const SESSION_COOKIE_NAME = "ajmsd_session";
+﻿const SESSION_COOKIE_NAME = "chitragupt_session";
 const DEFAULT_SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7;
 
 const encoder = new TextEncoder();

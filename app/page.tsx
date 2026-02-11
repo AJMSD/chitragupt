@@ -560,7 +560,7 @@ export default function Home() {
         <header className="flex flex-col gap-6 rounded-[32px] border border-orange-500/20 bg-[#120c08]/80 p-8 shadow-[0_20px_60px_rgba(14,8,4,0.65)] md:flex-row md:items-center md:justify-between motion-safe:animate-[fade-up_0.6s_ease-out]">
           <div className="space-y-2">
             <h1 className="font-[var(--font-display)] text-3xl font-semibold text-amber-100 md:text-4xl">
-              AJMSD OPS
+              CHITRAGUPT
             </h1>
             <div className="flex items-center gap-3 text-[11px] uppercase tracking-[0.3em] text-amber-200/70">
               <span>Updated {lastUpdatedLabel}</span>

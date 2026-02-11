@@ -89,7 +89,7 @@ A self-hosted operations dashboard for Aman's Ubuntu server.
 - `LOG_SOURCES` defines log sources (docker, systemd, or file).
 - See `.env.example` for sample values.
 
-## More Ideas (Post-MVP)
+## More Ideas (Maybe for later)
 - Add alerting for disk/service health (email, webhook, or chat).
 - Add safe actions (restart container/service) with an audit log.
 - Persist metrics history for long-term charts and trend views.

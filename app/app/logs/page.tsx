@@ -1,7 +1,7 @@
 ﻿"use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { IconArrowRight, IconRefresh, IconTerminal } from "@/app/components/icons";
+import { IconArrowRight, IconClock, IconRefresh } from "@/app/components/icons";
 import type {
   LogSourceInfo,
   LogSourcesResponse,
@@ -195,7 +195,7 @@ export default function LogsPage() {
             </div>
             {activeSource ? (
               <div className="flex items-center gap-2 text-xs uppercase tracking-[0.3em] text-amber-200/60">
-                <IconTerminal className="h-4 w-4" />
+                <IconClock className="h-4 w-4" />
                 {activeSource.type}
               </div>
             ) : null}

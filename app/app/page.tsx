@@ -3,10 +3,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
+  IconClock,
   IconFolder,
   IconGrid,
   IconServer,
-  IconTerminal,
 } from "@/app/components/icons";
 import type {
   DockerContainersResponse,
@@ -161,7 +161,7 @@ export default function PrivateDashboardPage() {
           detail="Configured log sources"
           href="/app/logs"
           error={errors.logs ?? null}
-          icon={<IconTerminal className="h-5 w-5" />}
+          icon={<IconClock className="h-5 w-5" />}
         />
       </div>
     </section>

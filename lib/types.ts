@@ -175,6 +175,11 @@ export type TerminalResizeResponse = {
   rows: number;
 };
 
+export type TerminalOutputRequest = {
+  sessionId: string;
+  cursor?: number;
+};
+
 export type TerminalOutputChunk = {
   index: number;
   data: string;

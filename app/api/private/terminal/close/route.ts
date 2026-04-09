@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { requireSession } from "@/lib/auth-server";
 import { agentFetchJson } from "@/lib/agent";
-import type { TerminalCloseRequest, TerminalCloseResponse } from "@/lib/types";
+import type { TerminalCloseResponse } from "@/lib/types";
+import { parseJsonBody, validateCloseBody } from "../validation";
 
 export const dynamic = "force-dynamic";
 
@@ -12,11 +13,20 @@ export async function POST(request: NextRequest) {
     return auth.response;
   }
 
-  const body = (await request.json()) as TerminalCloseRequest;
+  const parsed = await parseJsonBody(request);
+  if (!parsed.ok) {
+    return parsed.response;
+  }
+
+  const validated = validateCloseBody(parsed.data);
+  if (!validated.ok) {
+    return validated.response;
+  }
+
   const result = await agentFetchJson<TerminalCloseResponse>("/terminal/close", {
     private: true,
     method: "POST",
-    body,
+    body: validated.data,
   });
 
   if (!result.ok) {

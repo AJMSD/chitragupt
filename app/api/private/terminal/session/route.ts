@@ -3,9 +3,12 @@ import type { NextRequest } from "next/server";
 import { requireSession } from "@/lib/auth-server";
 import { agentFetchJson } from "@/lib/agent";
 import type {
-  TerminalSessionCreateRequest,
   TerminalSessionCreateResponse,
 } from "@/lib/types";
+import {
+  parseJsonBody,
+  validateSessionCreateBody,
+} from "../validation";
 
 export const dynamic = "force-dynamic";
 
@@ -15,13 +18,22 @@ export async function POST(request: NextRequest) {
     return auth.response;
   }
 
-  const body = (await request.json()) as TerminalSessionCreateRequest;
+  const parsed = await parseJsonBody(request);
+  if (!parsed.ok) {
+    return parsed.response;
+  }
+
+  const validated = validateSessionCreateBody(parsed.data);
+  if (!validated.ok) {
+    return validated.response;
+  }
+
   const result = await agentFetchJson<TerminalSessionCreateResponse>(
     "/terminal/session",
     {
       private: true,
       method: "POST",
-      body,
+      body: validated.data,
       timeoutMs: 8000,
     }
   );

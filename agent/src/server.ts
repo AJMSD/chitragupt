@@ -94,6 +94,13 @@ const TERMINAL_MAX_INPUT_BYTES_RAW = Number.parseInt(
 const TERMINAL_MAX_INPUT_BYTES = Number.isFinite(TERMINAL_MAX_INPUT_BYTES_RAW)
   ? TERMINAL_MAX_INPUT_BYTES_RAW
   : 16384;
+const TERMINAL_MAX_SESSIONS_RAW = Number.parseInt(
+  process.env.TERMINAL_MAX_SESSIONS ?? "3",
+  10
+);
+const TERMINAL_MAX_SESSIONS = Number.isFinite(TERMINAL_MAX_SESSIONS_RAW)
+  ? TERMINAL_MAX_SESSIONS_RAW
+  : 3;
 const TERMINAL_CWD = process.env.TERMINAL_CWD ?? process.cwd();
 const TERMINAL_SHELL =
   process.env.TERMINAL_SHELL ??
@@ -901,6 +908,7 @@ function scheduleTerminalIdleTimeout(sessionId: string) {
 }
 
 function updateTerminalActivity(session: TerminalSession) {
+  if (session.closedAt !== null) return;
   session.updatedAt = Date.now();
   scheduleTerminalIdleTimeout(session.id);
 }
@@ -947,6 +955,10 @@ async function readJsonBody<T>(
 }
 
 function createTerminalSession(colsRaw?: number, rowsRaw?: number) {
+  if (terminalSessions.size >= TERMINAL_MAX_SESSIONS) {
+    throw new Error("terminal session limit reached");
+  }
+
   const cols = clampTerminalCols(colsRaw ?? TERMINAL_DEFAULT_COLS);
   const rows = clampTerminalRows(rowsRaw ?? TERMINAL_DEFAULT_ROWS);
   const cwd = path.resolve(TERMINAL_CWD);
@@ -1529,10 +1541,20 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      const created = createTerminalSession(
-        bodyResult.value.cols,
-        bodyResult.value.rows
-      );
+      let created: ReturnType<typeof createTerminalSession>;
+      try {
+        created = createTerminalSession(bodyResult.value.cols, bodyResult.value.rows);
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.message === "terminal session limit reached"
+        ) {
+          sendError(res, 429, "Too many active terminal sessions");
+          logRequest(method, url.pathname, 429, startTime);
+          return;
+        }
+        throw error;
+      }
 
       sendJson(res, 200, {
         timestamp: new Date().toISOString(),

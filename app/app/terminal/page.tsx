@@ -38,7 +38,24 @@ function writeLocalList(key: string, values: string[]) {
   window.localStorage.setItem(key, JSON.stringify(values));
 }
 
-type TerminalState = "connecting" | "ready" | "closed" | "error";
+type TerminalState = "connecting" | "ready" | "running" | "closed" | "error";
+
+function getStatusLabel(state: TerminalState): string {
+  switch (state) {
+    case "connecting":
+      return "Connecting";
+    case "ready":
+      return "Ready";
+    case "running":
+      return "Running";
+    case "closed":
+      return "Closed";
+    case "error":
+      return "Error";
+    default:
+      return "Unknown";
+  }
+}
 
 export default function TerminalPage() {
   const terminalContainerRef = useRef<HTMLDivElement | null>(null);
@@ -281,10 +298,14 @@ export default function TerminalPage() {
     const trimmed = command.trim();
     if (!trimmed || !sessionIdRef.current) return;
     setIsSendingCommand(true);
+    setTerminalState("running");
     await sendInput(`${trimmed}\n`);
     addRecentCommand(trimmed);
     setCommandDraft("");
     setIsSendingCommand(false);
+    if (sessionIdRef.current) {
+      setTerminalState("ready");
+    }
   }, [addRecentCommand, sendInput]);
 
   const reconnectSession = useCallback(async () => {
@@ -379,7 +400,7 @@ export default function TerminalPage() {
               </div>
               <div className="mt-2 flex items-center gap-2 text-sm text-amber-100/80">
                 <IconTerminal className="h-4 w-4" />
-                <span>Status: {terminalState}</span>
+                <span>Status: {getStatusLabel(terminalState)}</span>
               </div>
             </div>
             <button

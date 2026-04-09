@@ -1,12 +1,12 @@
 ﻿import "dotenv/config";
 import http from "node:http";
 import os from "node:os";
-import { execFile } from "node:child_process";
+import { execFile, spawn as spawnProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createReadStream, promises as fs } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
-import { spawn, type IPty } from "node-pty";
+import { spawn as spawnPty } from "node-pty";
 
 const execFileAsync = promisify(execFile);
 
@@ -235,9 +235,17 @@ type TerminalOutputChunk = {
   data: string;
 };
 
+type TerminalProcess = {
+  write: (input: string) => void;
+  resize: (cols: number, rows: number) => void;
+  kill: () => void;
+  onData: (listener: (data: string) => void) => void;
+  onExit: (listener: (event: { exitCode: number }) => void) => void;
+};
+
 type TerminalSession = {
   id: string;
-  pty: IPty;
+  pty: TerminalProcess;
   output: TerminalOutputChunk[];
   cursor: number;
   createdAt: number;
@@ -857,6 +865,100 @@ function clampTerminalRows(value: number): number {
   return Math.min(TERMINAL_MAX_ROWS, Math.max(TERMINAL_MIN_ROWS, value));
 }
 
+function resolveTerminalShellCandidates(): string[] {
+  const candidates = [
+    TERMINAL_SHELL,
+    process.env.SHELL,
+    "/bin/bash",
+    "/bin/zsh",
+    "bash",
+    "zsh",
+    "sh",
+  ];
+  const unique = new Set<string>();
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const trimmed = candidate.trim();
+    if (!trimmed) continue;
+    unique.add(trimmed);
+  }
+  return Array.from(unique);
+}
+
+function spawnTerminalPty(
+  cols: number,
+  rows: number,
+  cwd: string
+): { pty: TerminalProcess; shell: string } {
+  const env = getTerminalEnv();
+  const shells = resolveTerminalShellCandidates();
+  let ptyError: unknown = null;
+
+  for (const shell of shells) {
+    try {
+      const pty = spawnPty(shell, [], {
+        name: "xterm-256color",
+        cols,
+        rows,
+        cwd,
+        env,
+      });
+      return { pty, shell };
+    } catch (error) {
+      ptyError = error;
+    }
+  }
+
+  let processError: unknown = null;
+  for (const shell of shells) {
+    try {
+      const child = spawnProcess(shell, [], {
+        cwd,
+        env,
+        stdio: "pipe",
+      });
+
+      const fallback: TerminalProcess = {
+        write(input: string) {
+          if (!child.stdin.destroyed) {
+            child.stdin.write(input);
+          }
+        },
+        resize() {
+          // No-op for non-PTY fallback mode.
+        },
+        kill() {
+          child.kill();
+        },
+        onData(listener: (data: string) => void) {
+          child.stdout.on("data", (chunk: Buffer | string) => {
+            listener(String(chunk));
+          });
+          child.stderr.on("data", (chunk: Buffer | string) => {
+            listener(String(chunk));
+          });
+        },
+        onExit(listener: (event: { exitCode: number }) => void) {
+          child.on("exit", (code) => {
+            listener({ exitCode: typeof code === "number" ? code : 0 });
+          });
+        },
+      };
+
+      return { pty: fallback, shell };
+    } catch (error) {
+      processError = error;
+    }
+  }
+
+  const lastError = processError ?? ptyError;
+  const reason =
+    lastError instanceof Error && lastError.message
+      ? lastError.message
+      : "failed to spawn terminal shell";
+  throw new Error(`unable to start terminal shell: ${reason}`);
+}
+
 function getTerminalEnv(): Record<string, string> {
   const blocked = new Set<string>(TERMINAL_ENV_BLOCKLIST);
   const env: Record<string, string> = {};
@@ -962,13 +1064,7 @@ function createTerminalSession(colsRaw?: number, rowsRaw?: number) {
   const cols = clampTerminalCols(colsRaw ?? TERMINAL_DEFAULT_COLS);
   const rows = clampTerminalRows(rowsRaw ?? TERMINAL_DEFAULT_ROWS);
   const cwd = path.resolve(TERMINAL_CWD);
-  const pty = spawn(TERMINAL_SHELL, [], {
-    name: "xterm-256color",
-    cols,
-    rows,
-    cwd,
-    env: getTerminalEnv(),
-  });
+  const { pty, shell } = spawnTerminalPty(cols, rows, cwd);
 
   const sessionId = randomUUID();
   const now = Date.now();
@@ -1007,7 +1103,7 @@ function createTerminalSession(colsRaw?: number, rowsRaw?: number) {
     cols,
     rows,
     cwd,
-    shell: TERMINAL_SHELL,
+    shell,
     createdAt: new Date(now).toISOString(),
   };
 }

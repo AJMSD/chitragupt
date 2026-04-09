@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import Link from "next/link";
 import {
+  IconClock,
   IconFolder,
   IconGrid,
   IconServer,
@@ -65,11 +66,20 @@ export default async function AppLayout({
           </Link>
           <Link
             className="flex h-12 w-12 items-center justify-center rounded-2xl border border-orange-500/20 bg-[#120c08]/70 text-amber-100 transition hover:border-orange-400/60 hover:bg-orange-400/10"
+            href="/app/terminal"
+            aria-label="Terminal"
+            title="Terminal"
+          >
+            <IconTerminal className="h-5 w-5" />
+            <span className="sr-only">Terminal</span>
+          </Link>
+          <Link
+            className="flex h-12 w-12 items-center justify-center rounded-2xl border border-orange-500/20 bg-[#120c08]/70 text-amber-100 transition hover:border-orange-400/60 hover:bg-orange-400/10"
             href="/app/logs"
             aria-label="Logs"
             title="Logs"
           >
-            <IconTerminal className="h-5 w-5" />
+            <IconClock className="h-5 w-5" />
             <span className="sr-only">Logs</span>
           </Link>
         </nav>

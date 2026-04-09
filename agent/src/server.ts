@@ -2,9 +2,11 @@
 import http from "node:http";
 import os from "node:os";
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { createReadStream, promises as fs } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
+import { spawn, type IPty } from "node-pty";
 
 const execFileAsync = promisify(execFile);
 
@@ -44,6 +46,66 @@ const LOG_REDACT_KEYS = [
   "AGENT_PRIVATE_VALUE",
 ] as const;
 const LOG_REDACT_MIN_LENGTH = 6;
+const TERMINAL_DEFAULT_COLS_RAW = Number.parseInt(
+  process.env.TERMINAL_DEFAULT_COLS ?? "120",
+  10
+);
+const TERMINAL_DEFAULT_ROWS_RAW = Number.parseInt(
+  process.env.TERMINAL_DEFAULT_ROWS ?? "32",
+  10
+);
+const TERMINAL_MIN_COLS = 40;
+const TERMINAL_MAX_COLS = 240;
+const TERMINAL_MIN_ROWS = 12;
+const TERMINAL_MAX_ROWS = 80;
+const TERMINAL_DEFAULT_COLS = Number.isFinite(TERMINAL_DEFAULT_COLS_RAW)
+  ? TERMINAL_DEFAULT_COLS_RAW
+  : 120;
+const TERMINAL_DEFAULT_ROWS = Number.isFinite(TERMINAL_DEFAULT_ROWS_RAW)
+  ? TERMINAL_DEFAULT_ROWS_RAW
+  : 32;
+const TERMINAL_SESSION_IDLE_TIMEOUT_MS_RAW = Number.parseInt(
+  process.env.TERMINAL_SESSION_IDLE_TIMEOUT_MS ?? "900000",
+  10
+);
+const TERMINAL_SESSION_IDLE_TIMEOUT_MS = Number.isFinite(
+  TERMINAL_SESSION_IDLE_TIMEOUT_MS_RAW
+)
+  ? TERMINAL_SESSION_IDLE_TIMEOUT_MS_RAW
+  : 900000;
+const TERMINAL_CLOSED_TTL_MS_RAW = Number.parseInt(
+  process.env.TERMINAL_CLOSED_TTL_MS ?? "30000",
+  10
+);
+const TERMINAL_CLOSED_TTL_MS = Number.isFinite(TERMINAL_CLOSED_TTL_MS_RAW)
+  ? TERMINAL_CLOSED_TTL_MS_RAW
+  : 30000;
+const TERMINAL_MAX_CHUNKS_RAW = Number.parseInt(
+  process.env.TERMINAL_MAX_CHUNKS ?? "1500",
+  10
+);
+const TERMINAL_MAX_CHUNKS = Number.isFinite(TERMINAL_MAX_CHUNKS_RAW)
+  ? TERMINAL_MAX_CHUNKS_RAW
+  : 1500;
+const TERMINAL_MAX_INPUT_BYTES_RAW = Number.parseInt(
+  process.env.TERMINAL_MAX_INPUT_BYTES ?? "16384",
+  10
+);
+const TERMINAL_MAX_INPUT_BYTES = Number.isFinite(TERMINAL_MAX_INPUT_BYTES_RAW)
+  ? TERMINAL_MAX_INPUT_BYTES_RAW
+  : 16384;
+const TERMINAL_CWD = process.env.TERMINAL_CWD ?? process.cwd();
+const TERMINAL_SHELL =
+  process.env.TERMINAL_SHELL ??
+  (process.platform === "win32"
+    ? process.env.ComSpec ?? "powershell.exe"
+    : process.env.SHELL ?? "/bin/bash");
+const TERMINAL_ENV_BLOCKLIST = [
+  "AUTH_PASSWORD",
+  "AUTH_SECRET",
+  "AGENT_TOKEN",
+  "AGENT_PRIVATE_VALUE",
+] as const;
 
 const LOG_REDACT_VALUES = LOG_REDACT_KEYS.flatMap((key) => {
   const value = process.env[key];
@@ -161,7 +223,27 @@ type LogResult =
   | { ok: true; content: string }
   | { ok: false; status: number; error: string };
 
+type TerminalOutputChunk = {
+  index: number;
+  data: string;
+};
+
+type TerminalSession = {
+  id: string;
+  pty: IPty;
+  output: TerminalOutputChunk[];
+  cursor: number;
+  createdAt: number;
+  updatedAt: number;
+  closedAt: number | null;
+  exitCode: number | null;
+  closeReason: string | null;
+  idleTimer: NodeJS.Timeout | null;
+  cleanupTimer: NodeJS.Timeout | null;
+};
+
 let lastCpuSnapshot: CpuSnapshot | null = null;
+const terminalSessions = new Map<string, TerminalSession>();
 
 function roundTo(value: number, decimals = 1): number {
   const factor = 10 ** decimals;
@@ -758,6 +840,171 @@ function redactLogContent(content: string): string {
   return redacted;
 }
 
+function clampTerminalCols(value: number): number {
+  if (!Number.isFinite(value)) return TERMINAL_DEFAULT_COLS;
+  return Math.min(TERMINAL_MAX_COLS, Math.max(TERMINAL_MIN_COLS, value));
+}
+
+function clampTerminalRows(value: number): number {
+  if (!Number.isFinite(value)) return TERMINAL_DEFAULT_ROWS;
+  return Math.min(TERMINAL_MAX_ROWS, Math.max(TERMINAL_MIN_ROWS, value));
+}
+
+function getTerminalEnv(): Record<string, string> {
+  const blocked = new Set<string>(TERMINAL_ENV_BLOCKLIST);
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (blocked.has(key)) continue;
+    if (value === undefined) continue;
+    env[key] = value;
+  }
+  return env;
+}
+
+function safeClearTimer(timer: NodeJS.Timeout | null) {
+  if (timer) {
+    clearTimeout(timer);
+  }
+}
+
+function scheduleSessionRemoval(sessionId: string, delayMs: number) {
+  const session = terminalSessions.get(sessionId);
+  if (!session) return;
+  safeClearTimer(session.cleanupTimer);
+  session.cleanupTimer = setTimeout(() => {
+    terminalSessions.delete(sessionId);
+  }, delayMs);
+}
+
+function closeTerminalSession(sessionId: string, reason: string) {
+  const session = terminalSessions.get(sessionId);
+  if (!session) return;
+  if (session.closedAt === null) {
+    session.closedAt = Date.now();
+    session.closeReason = reason;
+  }
+  safeClearTimer(session.idleTimer);
+  session.idleTimer = null;
+  try {
+    session.pty.kill();
+  } catch {}
+  scheduleSessionRemoval(sessionId, TERMINAL_CLOSED_TTL_MS);
+}
+
+function scheduleTerminalIdleTimeout(sessionId: string) {
+  const session = terminalSessions.get(sessionId);
+  if (!session) return;
+  safeClearTimer(session.idleTimer);
+  session.idleTimer = setTimeout(() => {
+    closeTerminalSession(sessionId, "idle-timeout");
+  }, TERMINAL_SESSION_IDLE_TIMEOUT_MS);
+}
+
+function updateTerminalActivity(session: TerminalSession) {
+  session.updatedAt = Date.now();
+  scheduleTerminalIdleTimeout(session.id);
+}
+
+function appendTerminalOutput(session: TerminalSession, data: string) {
+  if (!data) return;
+  session.cursor += 1;
+  session.output.push({ index: session.cursor, data });
+  if (session.output.length > TERMINAL_MAX_CHUNKS) {
+    session.output.splice(0, session.output.length - TERMINAL_MAX_CHUNKS);
+  }
+  updateTerminalActivity(session);
+}
+
+async function readJsonBody<T>(
+  req: http.IncomingMessage,
+  maxBytes = 1_000_000
+): Promise<
+  | { ok: true; value: T }
+  | { ok: false; status: number; error: string }
+> {
+  const buffers: Buffer[] = [];
+  let totalBytes = 0;
+
+  for await (const chunk of req) {
+    const piece = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+    totalBytes += piece.length;
+    if (totalBytes > maxBytes) {
+      return { ok: false, status: 413, error: "Request body too large" };
+    }
+    buffers.push(piece);
+  }
+
+  const raw = Buffer.concat(buffers).toString("utf8").trim();
+  if (!raw) {
+    return { ok: false, status: 400, error: "Missing JSON body" };
+  }
+
+  try {
+    return { ok: true, value: JSON.parse(raw) as T };
+  } catch {
+    return { ok: false, status: 400, error: "Invalid JSON body" };
+  }
+}
+
+function createTerminalSession(colsRaw?: number, rowsRaw?: number) {
+  const cols = clampTerminalCols(colsRaw ?? TERMINAL_DEFAULT_COLS);
+  const rows = clampTerminalRows(rowsRaw ?? TERMINAL_DEFAULT_ROWS);
+  const cwd = path.resolve(TERMINAL_CWD);
+  const pty = spawn(TERMINAL_SHELL, [], {
+    name: "xterm-256color",
+    cols,
+    rows,
+    cwd,
+    env: getTerminalEnv(),
+  });
+
+  const sessionId = randomUUID();
+  const now = Date.now();
+  const session: TerminalSession = {
+    id: sessionId,
+    pty,
+    output: [],
+    cursor: 0,
+    createdAt: now,
+    updatedAt: now,
+    closedAt: null,
+    exitCode: null,
+    closeReason: null,
+    idleTimer: null,
+    cleanupTimer: null,
+  };
+
+  pty.onData((data) => {
+    appendTerminalOutput(session, data);
+  });
+
+  pty.onExit(({ exitCode }) => {
+    session.exitCode = exitCode;
+    session.closedAt = Date.now();
+    session.closeReason = session.closeReason ?? "process-exit";
+    safeClearTimer(session.idleTimer);
+    session.idleTimer = null;
+    scheduleSessionRemoval(session.id, TERMINAL_CLOSED_TTL_MS);
+  });
+
+  terminalSessions.set(sessionId, session);
+  scheduleTerminalIdleTimeout(sessionId);
+
+  return {
+    id: sessionId,
+    cols,
+    rows,
+    cwd,
+    shell: TERMINAL_SHELL,
+    createdAt: new Date(now).toISOString(),
+  };
+}
+
+function getTerminalSession(sessionId: string | null): TerminalSession | null {
+  if (!sessionId) return null;
+  return terminalSessions.get(sessionId) ?? null;
+}
+
 function sanitizeRelativePath(raw: string | null): string | null {
   const value = raw?.trim() ?? "";
   if (!value) return "";
@@ -874,7 +1121,8 @@ function isPrivatePath(pathname: string): boolean {
     pathname.startsWith("/docker") ||
     pathname.startsWith("/systemd") ||
     pathname.startsWith("/files") ||
-    pathname.startsWith("/logs")
+    pathname.startsWith("/logs") ||
+    pathname.startsWith("/terminal")
   );
 }
 
@@ -1253,9 +1501,15 @@ const server = http.createServer(async (req, res) => {
   const startTime = Date.now();
   const method = req.method;
   const url = new URL(req.url ?? "/", "http://localhost");
+  const isTerminalPost =
+    method === "POST" &&
+    (url.pathname === "/terminal/session" ||
+      url.pathname === "/terminal/input" ||
+      url.pathname === "/terminal/resize" ||
+      url.pathname === "/terminal/close");
 
   try {
-    if (method !== "GET") {
+    if (method !== "GET" && !isTerminalPost) {
       sendError(res, 405, "Method not allowed");
       logRequest(method, url.pathname, 405, startTime);
       return;
@@ -1264,6 +1518,168 @@ const server = http.createServer(async (req, res) => {
     if (isPrivatePath(url.pathname) && !hasPrivateAccess(req)) {
       sendError(res, 401, "Unauthorized");
       logRequest(method, url.pathname, 401, startTime);
+      return;
+    }
+
+    if (url.pathname === "/terminal/session" && method === "POST") {
+      const bodyResult = await readJsonBody<{ cols?: number; rows?: number }>(req);
+      if (!bodyResult.ok) {
+        sendError(res, bodyResult.status, bodyResult.error);
+        logRequest(method, url.pathname, bodyResult.status, startTime);
+        return;
+      }
+
+      const created = createTerminalSession(
+        bodyResult.value.cols,
+        bodyResult.value.rows
+      );
+
+      sendJson(res, 200, {
+        timestamp: new Date().toISOString(),
+        sessionId: created.id,
+        cols: created.cols,
+        rows: created.rows,
+        cwd: created.cwd,
+        shell: created.shell,
+        createdAt: created.createdAt,
+      });
+      logRequest(method, url.pathname, 200, startTime);
+      return;
+    }
+
+    if (url.pathname === "/terminal/input" && method === "POST") {
+      const bodyResult = await readJsonBody<{ sessionId?: string; input?: string }>(req);
+      if (!bodyResult.ok) {
+        sendError(res, bodyResult.status, bodyResult.error);
+        logRequest(method, url.pathname, bodyResult.status, startTime);
+        return;
+      }
+
+      const session = getTerminalSession(bodyResult.value.sessionId ?? null);
+      if (!session) {
+        sendError(res, 404, "Unknown terminal session");
+        logRequest(method, url.pathname, 404, startTime);
+        return;
+      }
+      if (session.closedAt !== null) {
+        sendError(res, 409, "Terminal session is closed");
+        logRequest(method, url.pathname, 409, startTime);
+        return;
+      }
+
+      const input = String(bodyResult.value.input ?? "");
+      if (!input.length) {
+        sendError(res, 400, "Missing input");
+        logRequest(method, url.pathname, 400, startTime);
+        return;
+      }
+
+      const inputBytes = Buffer.byteLength(input, "utf8");
+      if (inputBytes > TERMINAL_MAX_INPUT_BYTES) {
+        sendError(res, 413, "Terminal input too large");
+        logRequest(method, url.pathname, 413, startTime);
+        return;
+      }
+
+      session.pty.write(input);
+      updateTerminalActivity(session);
+
+      sendJson(res, 200, {
+        timestamp: new Date().toISOString(),
+        sessionId: session.id,
+        acceptedBytes: inputBytes,
+      });
+      logRequest(method, url.pathname, 200, startTime);
+      return;
+    }
+
+    if (url.pathname === "/terminal/resize" && method === "POST") {
+      const bodyResult = await readJsonBody<{ sessionId?: string; cols?: number; rows?: number }>(req);
+      if (!bodyResult.ok) {
+        sendError(res, bodyResult.status, bodyResult.error);
+        logRequest(method, url.pathname, bodyResult.status, startTime);
+        return;
+      }
+
+      const session = getTerminalSession(bodyResult.value.sessionId ?? null);
+      if (!session) {
+        sendError(res, 404, "Unknown terminal session");
+        logRequest(method, url.pathname, 404, startTime);
+        return;
+      }
+      if (session.closedAt !== null) {
+        sendError(res, 409, "Terminal session is closed");
+        logRequest(method, url.pathname, 409, startTime);
+        return;
+      }
+
+      const cols = clampTerminalCols(bodyResult.value.cols ?? TERMINAL_DEFAULT_COLS);
+      const rows = clampTerminalRows(bodyResult.value.rows ?? TERMINAL_DEFAULT_ROWS);
+      session.pty.resize(cols, rows);
+      updateTerminalActivity(session);
+
+      sendJson(res, 200, {
+        timestamp: new Date().toISOString(),
+        sessionId: session.id,
+        cols,
+        rows,
+      });
+      logRequest(method, url.pathname, 200, startTime);
+      return;
+    }
+
+    if (url.pathname === "/terminal/output" && method === "GET") {
+      const sessionId = url.searchParams.get("sessionId");
+      const session = getTerminalSession(sessionId);
+      if (!session) {
+        sendError(res, 404, "Unknown terminal session");
+        logRequest(method, url.pathname, 404, startTime);
+        return;
+      }
+
+      const cursorRaw = url.searchParams.get("cursor");
+      const parsedCursor = cursorRaw ? Number.parseInt(cursorRaw, 10) : NaN;
+      const cursor = Number.isFinite(parsedCursor)
+        ? Math.max(0, parsedCursor)
+        : 0;
+      const chunks = session.output.filter((chunk) => chunk.index > cursor);
+      updateTerminalActivity(session);
+
+      sendJson(res, 200, {
+        timestamp: new Date().toISOString(),
+        sessionId: session.id,
+        cursor: session.cursor,
+        chunks,
+        closed: session.closedAt !== null,
+        exitCode: session.exitCode,
+        closeReason: session.closeReason,
+      });
+      logRequest(method, url.pathname, 200, startTime);
+      return;
+    }
+
+    if (url.pathname === "/terminal/close" && method === "POST") {
+      const bodyResult = await readJsonBody<{ sessionId?: string }>(req);
+      if (!bodyResult.ok) {
+        sendError(res, bodyResult.status, bodyResult.error);
+        logRequest(method, url.pathname, bodyResult.status, startTime);
+        return;
+      }
+
+      const session = getTerminalSession(bodyResult.value.sessionId ?? null);
+      if (!session) {
+        sendError(res, 404, "Unknown terminal session");
+        logRequest(method, url.pathname, 404, startTime);
+        return;
+      }
+
+      closeTerminalSession(session.id, "closed-by-client");
+      sendJson(res, 200, {
+        timestamp: new Date().toISOString(),
+        sessionId: session.id,
+        closed: true,
+      });
+      logRequest(method, url.pathname, 200, startTime);
       return;
     }
 

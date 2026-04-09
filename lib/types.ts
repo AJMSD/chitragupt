@@ -135,3 +135,67 @@ export type LogTailResponse = {
   lines: number;
   content: string;
 };
+
+export type TerminalSessionCreateRequest = {
+  cols?: number;
+  rows?: number;
+};
+
+export type TerminalSessionCreateResponse = {
+  timestamp: string;
+  sessionId: string;
+  cols: number;
+  rows: number;
+  cwd: string;
+  shell: string;
+  createdAt: string;
+};
+
+export type TerminalInputRequest = {
+  sessionId: string;
+  input: string;
+};
+
+export type TerminalInputResponse = {
+  timestamp: string;
+  sessionId: string;
+  acceptedBytes: number;
+};
+
+export type TerminalResizeRequest = {
+  sessionId: string;
+  cols: number;
+  rows: number;
+};
+
+export type TerminalResizeResponse = {
+  timestamp: string;
+  sessionId: string;
+  cols: number;
+  rows: number;
+};
+
+export type TerminalOutputChunk = {
+  index: number;
+  data: string;
+};
+
+export type TerminalOutputResponse = {
+  timestamp: string;
+  sessionId: string;
+  cursor: number;
+  chunks: TerminalOutputChunk[];
+  closed: boolean;
+  exitCode: number | null;
+  closeReason: string | null;
+};
+
+export type TerminalCloseRequest = {
+  sessionId: string;
+};
+
+export type TerminalCloseResponse = {
+  timestamp: string;
+  sessionId: string;
+  closed: boolean;
+};

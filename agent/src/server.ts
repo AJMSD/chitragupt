@@ -959,15 +959,16 @@ function spawnTerminalPty(
   throw new Error(`unable to start terminal shell: ${reason}`);
 }
 
-function getTerminalEnv(): Record<string, string> {
+function getTerminalEnv(): NodeJS.ProcessEnv {
   const blocked = new Set<string>(TERMINAL_ENV_BLOCKLIST);
-  const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (blocked.has(key)) continue;
-    if (value === undefined) continue;
-    env[key] = value;
+  const env: Record<string, string | undefined> = {
+    ...process.env,
+    NODE_ENV: process.env.NODE_ENV ?? "development",
+  };
+  for (const key of blocked) {
+    delete env[key];
   }
-  return env;
+  return env as NodeJS.ProcessEnv;
 }
 
 function safeClearTimer(timer: NodeJS.Timeout | null) {

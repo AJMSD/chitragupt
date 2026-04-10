@@ -4,7 +4,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { IconRefresh, IconTerminal } from "@/app/components/icons";
-import { fetchJson, formatApiError } from "@/lib/client";
+import { fetchJson } from "@/lib/client";
+import {
+  canStartLifecycleAction,
+  shouldProcessPollResult,
+} from "./lifecycle";
+import {
+  formatTerminalApiError,
+  isTerminalSessionUnavailable,
+} from "./errors";
 import type {
   TerminalCloseResponse,
   TerminalInputResponse,
@@ -66,6 +74,10 @@ export default function TerminalPage() {
   const cursorRef = useRef<number>(0);
   const lineBufferRef = useRef<string>("");
   const escapeSequenceRef = useRef(false);
+  const creatingSessionRef = useRef(false);
+  const reconnectingSessionRef = useRef(false);
+  const mountedRef = useRef(true);
+  const missingSessionErrorShownRef = useRef(false);
 
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [terminalState, setTerminalState] = useState<TerminalState>("connecting");
@@ -106,15 +118,38 @@ export default function TerminalPage() {
   }, []);
 
   const writeTerminalError = useCallback((message: string) => {
+    if (!mountedRef.current) return;
     setError(message);
     const term = terminalRef.current;
     if (!term) return;
     term.writeln("\r\n\x1b[31m[error]\x1b[0m " + message);
   }, []);
 
+  const notifyMissingSession = useCallback((message?: string) => {
+    if (missingSessionErrorShownRef.current) return;
+    missingSessionErrorShownRef.current = true;
+    writeTerminalError(message ?? "No active terminal session. Reconnect and try again.");
+    setTerminalState("error");
+  }, [writeTerminalError]);
+
+  const markSessionUnavailable = useCallback(() => {
+    if (pollTimerRef.current !== null) {
+      window.clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+    sessionIdRef.current = null;
+    cursorRef.current = 0;
+    if (!mountedRef.current) return;
+    setSessionId(null);
+  }, []);
+
   const sendInput = useCallback(async (input: string) => {
     const activeSession = sessionIdRef.current;
-    if (!activeSession) return;
+    if (!activeSession) {
+      notifyMissingSession();
+      return false;
+    }
+    missingSessionErrorShownRef.current = false;
     const result = await fetchJson<TerminalInputResponse>(
       "/api/private/terminal/input",
       {
@@ -128,10 +163,18 @@ export default function TerminalPage() {
     );
 
     if (!result.ok) {
-      writeTerminalError(formatApiError(result.error));
+      const message = formatTerminalApiError(result.error);
+      if (isTerminalSessionUnavailable(result.error)) {
+        markSessionUnavailable();
+        notifyMissingSession(message);
+        return false;
+      }
+      writeTerminalError(message);
       setTerminalState("error");
+      return false;
     }
-  }, [writeTerminalError]);
+    return true;
+  }, [markSessionUnavailable, notifyMissingSession, writeTerminalError]);
 
   const sendResize = useCallback(async () => {
     const term = terminalRef.current;
@@ -154,12 +197,16 @@ export default function TerminalPage() {
     );
 
     if (!result.ok) {
-      writeTerminalError(formatApiError(result.error));
+      writeTerminalError(formatTerminalApiError(result.error));
     }
   }, [writeTerminalError]);
 
   const closeSession = useCallback(async () => {
     const activeSession = sessionIdRef.current;
+    if (pollTimerRef.current !== null) {
+      window.clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
     if (!activeSession) return;
     await fetchJson<TerminalCloseResponse>("/api/private/terminal/close", {
       method: "POST",
@@ -167,6 +214,10 @@ export default function TerminalPage() {
       body: JSON.stringify({ sessionId: activeSession }),
     });
     sessionIdRef.current = null;
+    cursorRef.current = 0;
+    lineBufferRef.current = "";
+    missingSessionErrorShownRef.current = false;
+    if (!mountedRef.current) return;
     setSessionId(null);
   }, []);
 
@@ -211,43 +262,76 @@ export default function TerminalPage() {
       pollTimerRef.current = null;
     }
 
+    let pollInFlight = false;
+
     const poll = async () => {
-      const params = new URLSearchParams({
-        sessionId: activeSessionId,
-        cursor: String(cursorRef.current),
-      });
-
-      const result = await fetchJson<TerminalOutputResponse>(
-        `/api/private/terminal/output?${params.toString()}`
-      );
-
-      if (!result.ok) {
-        writeTerminalError(formatApiError(result.error));
-        setTerminalState("error");
+      if (pollInFlight) return;
+      if (
+        !shouldProcessPollResult({
+          mounted: mountedRef.current,
+          currentSessionId: sessionIdRef.current,
+          polledSessionId: activeSessionId,
+        })
+      ) {
         return;
       }
+      pollInFlight = true;
+      try {
+        const params = new URLSearchParams({
+          sessionId: activeSessionId,
+          cursor: String(cursorRef.current),
+        });
 
-      setError(null);
-      const term = terminalRef.current;
-      if (term) {
-        for (const chunk of result.data.chunks) {
-          term.write(chunk.data);
-        }
-      }
-      cursorRef.current = result.data.cursor;
+        const result = await fetchJson<TerminalOutputResponse>(
+          `/api/private/terminal/output?${params.toString()}`
+        );
 
-      if (result.data.closed) {
-        setTerminalState("closed");
-        if (result.data.closeReason) {
-          const note = `\r\n\x1b[33m[session closed]\x1b[0m ${result.data.closeReason}`;
-          term?.writeln(note);
+        if (
+          !shouldProcessPollResult({
+            mounted: mountedRef.current,
+            currentSessionId: sessionIdRef.current,
+            polledSessionId: activeSessionId,
+          })
+        ) {
+          return;
         }
-        if (pollTimerRef.current !== null) {
-          window.clearInterval(pollTimerRef.current);
-          pollTimerRef.current = null;
+
+        if (!result.ok) {
+          const message = formatTerminalApiError(result.error);
+          if (isTerminalSessionUnavailable(result.error)) {
+            markSessionUnavailable();
+            notifyMissingSession(message);
+            return;
+          }
+          writeTerminalError(message);
+          setTerminalState("error");
+          return;
         }
-      } else {
-        setTerminalState("ready");
+
+        setError(null);
+        const term = terminalRef.current;
+        if (term) {
+          for (const chunk of result.data.chunks) {
+            term.write(chunk.data);
+          }
+        }
+        cursorRef.current = result.data.cursor;
+
+        if (result.data.closed) {
+          setTerminalState("closed");
+          if (result.data.closeReason) {
+            const note = `\r\n\x1b[33m[session closed]\x1b[0m ${result.data.closeReason}`;
+            term?.writeln(note);
+          }
+          if (pollTimerRef.current !== null) {
+            window.clearInterval(pollTimerRef.current);
+            pollTimerRef.current = null;
+          }
+        } else {
+          setTerminalState("ready");
+        }
+      } finally {
+        pollInFlight = false;
       }
     };
 
@@ -255,62 +339,93 @@ export default function TerminalPage() {
     pollTimerRef.current = window.setInterval(() => {
       void poll();
     }, OUTPUT_POLL_MS);
-  }, [writeTerminalError]);
+  }, [markSessionUnavailable, notifyMissingSession, writeTerminalError]);
 
   const createSession = useCallback(async () => {
+    if (!canStartLifecycleAction(creatingSessionRef.current)) {
+      return;
+    }
     const term = terminalRef.current;
     const fitAddon = fitAddonRef.current;
     if (!term || !fitAddon) return;
+    creatingSessionRef.current = true;
 
-    setTerminalState("connecting");
-    setError(null);
-    term.clear();
-    fitAddon.fit();
+    try {
+      setTerminalState("connecting");
+      setError(null);
+      term.clear();
+      fitAddon.fit();
 
-    const result = await fetchJson<TerminalSessionCreateResponse>(
-      "/api/private/terminal/session",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          cols: term.cols,
-          rows: term.rows,
-        }),
+      const result = await fetchJson<TerminalSessionCreateResponse>(
+        "/api/private/terminal/session",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            cols: term.cols,
+            rows: term.rows,
+          }),
+        }
+      );
+
+      if (!result.ok) {
+        const message = formatTerminalApiError(result.error);
+        setTerminalState("error");
+        writeTerminalError(message);
+        return;
       }
-    );
 
-    if (!result.ok) {
-      const message = formatApiError(result.error);
-      setTerminalState("error");
-      writeTerminalError(message);
-      return;
+      if (!mountedRef.current) {
+        return;
+      }
+
+      cursorRef.current = 0;
+      lineBufferRef.current = "";
+      missingSessionErrorShownRef.current = false;
+      sessionIdRef.current = result.data.sessionId;
+      setSessionId(result.data.sessionId);
+      setTerminalState("ready");
+      startPolling(result.data.sessionId);
+    } finally {
+      creatingSessionRef.current = false;
     }
-
-    cursorRef.current = 0;
-    lineBufferRef.current = "";
-    sessionIdRef.current = result.data.sessionId;
-    setSessionId(result.data.sessionId);
-    setTerminalState("ready");
-    startPolling(result.data.sessionId);
   }, [startPolling, writeTerminalError]);
 
   const runCommand = useCallback(async (command: string) => {
     const trimmed = command.trim();
-    if (!trimmed || !sessionIdRef.current) return;
+    if (!trimmed) return;
+    if (!sessionIdRef.current) {
+      notifyMissingSession();
+      return;
+    }
     setIsSendingCommand(true);
     setTerminalState("running");
-    await sendInput(`${trimmed}\n`);
+    const sent = await sendInput(`${trimmed}\n`);
+    if (!sent) {
+      setIsSendingCommand(false);
+      return;
+    }
     addRecentCommand(trimmed);
     setCommandDraft("");
     setIsSendingCommand(false);
     if (sessionIdRef.current) {
       setTerminalState("ready");
     }
-  }, [addRecentCommand, sendInput]);
+  }, [addRecentCommand, notifyMissingSession, sendInput]);
 
   const reconnectSession = useCallback(async () => {
-    await closeSession();
-    await createSession();
+    if (!canStartLifecycleAction(reconnectingSessionRef.current)) {
+      return;
+    }
+    reconnectingSessionRef.current = true;
+    try {
+      await closeSession();
+      if (mountedRef.current) {
+        await createSession();
+      }
+    } finally {
+      reconnectingSessionRef.current = false;
+    }
   }, [closeSession, createSession]);
 
   useEffect(() => {
@@ -350,6 +465,7 @@ export default function TerminalPage() {
 
     terminalRef.current = term;
     fitAddonRef.current = fitAddon;
+    mountedRef.current = true;
 
     const dataDisposable = term.onData((data) => {
       handleDataForHistory(data);
@@ -361,10 +477,10 @@ export default function TerminalPage() {
     };
     window.addEventListener("resize", resizeHandler);
 
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial terminal session setup
     void createSession();
 
     return () => {
+      mountedRef.current = false;
       dataDisposable.dispose();
       window.removeEventListener("resize", resizeHandler);
       if (pollTimerRef.current !== null) {

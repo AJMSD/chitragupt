@@ -7,6 +7,11 @@ import { createReadStream, promises as fs } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
 import { spawn as spawnPty } from "node-pty";
+import {
+  countActiveSessions,
+  hasReachedSessionLimit,
+} from "./terminal-session-accounting";
+import { buildTerminalFallbackAttempts } from "./terminal-fallback";
 
 const execFileAsync = promisify(execFile);
 
@@ -486,14 +491,33 @@ async function getIntelGpuInfo(): Promise<GpuInfo | null> {
 
 async function getDisks(): Promise<DiskInfo[]> {
   let stdout = "";
+  const platform = process.platform;
 
-  try {
-    ({ stdout } = await execFileAsync("df", [
-      "-kP",
-      "--output=source,fstype,size,used,avail,pcent,target",
-    ]));
-  } catch {
-    ({ stdout } = await execFileAsync("df", ["-kPT"]));
+  const logDiskDebug = (message: string, error?: unknown) => {
+    if (!DEBUG_DISKS) return;
+    if (error instanceof Error) {
+      console.warn(`[disks] ${message}: ${error.message}`);
+      return;
+    }
+    if (typeof error === "string") {
+      console.warn(`[disks] ${message}: ${error}`);
+      return;
+    }
+    console.warn(`[disks] ${message}`);
+  };
+
+  if (platform === "darwin") {
+    ({ stdout } = await execFileAsync("df", ["-kP"]));
+  } else {
+    try {
+      ({ stdout } = await execFileAsync("df", [
+        "-kP",
+        "--output=source,fstype,size,used,avail,pcent,target",
+      ]));
+    } catch (error) {
+      logDiskDebug("df --output mode failed, retrying with -kPT", error);
+      ({ stdout } = await execFileAsync("df", ["-kPT"]));
+    }
   }
 
   const lines = stdout.trim().split("\n");
@@ -526,7 +550,9 @@ async function getDisks(): Promise<DiskInfo[]> {
       ]);
       const name = nameRaw.trim().split(/\s+/)[0];
       if (name) return name;
-    } catch {}
+    } catch (error) {
+      logDiskDebug(`lsblk KNAME failed for ${source}`, error);
+    }
 
     try {
       const { stdout: nameRaw } = await execFileAsync("lsblk", [
@@ -536,7 +562,9 @@ async function getDisks(): Promise<DiskInfo[]> {
       ]);
       const name = nameRaw.trim().split(/\s+/)[0];
       if (name) return name;
-    } catch {}
+    } catch (error) {
+      logDiskDebug(`lsblk NAME failed for ${source}`, error);
+    }
 
     return path.basename(source);
   };
@@ -550,7 +578,8 @@ async function getDisks(): Promise<DiskInfo[]> {
       ]);
       const parent = parentRaw.trim().split(/\s+/)[0];
       return parent || null;
-    } catch {
+    } catch (error) {
+      logDiskDebug(`lsblk PKNAME failed for ${source}`, error);
       return null;
     }
   };
@@ -705,12 +734,24 @@ async function getDisks(): Promise<DiskInfo[]> {
     if (!line.trim()) continue;
 
     const parts = line.trim().split(/\s+/);
-    if (parts.length < 7) {
+    if (parts.length < 6) {
       continue;
     }
 
+    const includesType =
+      parts.length >= 7 && !/^\d+$/.test(parts[1]) && /^\d+$/.test(parts[2]);
     const [filesystem, type, blocks, used, available, capacity, ...mountParts] =
-      parts;
+      includesType
+        ? parts
+        : [
+            parts[0],
+            "unknown",
+            parts[1],
+            parts[2],
+            parts[3],
+            parts[4],
+            ...parts.slice(5),
+          ];
     const mountRaw = mountParts.join(" ");
     const mount = mountRaw.replace(/\\040/g, " ");
     const usedPercent = Number.parseFloat(capacity.replace("%", ""));
@@ -889,7 +930,7 @@ function spawnTerminalPty(
   cols: number,
   rows: number,
   cwd: string
-): { pty: TerminalProcess; shell: string } {
+): { pty: TerminalProcess; shell: string; mode: "pty" | "fallback" } {
   const env = getTerminalEnv();
   const shells = resolveTerminalShellCandidates();
   let ptyError: unknown = null;
@@ -903,16 +944,16 @@ function spawnTerminalPty(
         cwd,
         env,
       });
-      return { pty, shell };
+      return { pty, shell, mode: "pty" };
     } catch (error) {
       ptyError = error;
     }
   }
 
   let processError: unknown = null;
-  for (const shell of shells) {
+  for (const attempt of buildTerminalFallbackAttempts(shells)) {
     try {
-      const child = spawnProcess(shell, [], {
+      const child = spawnProcess(attempt.shell, attempt.args, {
         cwd,
         env,
         stdio: "pipe",
@@ -945,7 +986,17 @@ function spawnTerminalPty(
         },
       };
 
-      return { pty: fallback, shell };
+      const ptyReason =
+        ptyError instanceof Error && ptyError.message
+          ? ptyError.message
+          : "PTY startup failed";
+      const argSuffix = attempt.args.length > 0 ? ` args=${attempt.args.join(" ")}` : "";
+      logTerminalLifecycle(
+        "fallback",
+        `shell=${attempt.shell}${argSuffix} reason=${ptyReason}`
+      );
+
+      return { pty: fallback, shell: attempt.shell, mode: "fallback" };
     } catch (error) {
       processError = error;
     }
@@ -977,6 +1028,11 @@ function safeClearTimer(timer: NodeJS.Timeout | null) {
   }
 }
 
+function logTerminalLifecycle(event: string, message: string) {
+  const timestamp = new Date().toISOString();
+  console.log(`[${timestamp}] [terminal] ${event} ${message}`);
+}
+
 function scheduleSessionRemoval(sessionId: string, delayMs: number) {
   const session = terminalSessions.get(sessionId);
   if (!session) return;
@@ -992,6 +1048,11 @@ function closeTerminalSession(sessionId: string, reason: string) {
   if (session.closedAt === null) {
     session.closedAt = Date.now();
     session.closeReason = reason;
+    const activeCount = countActiveSessions(terminalSessions.values());
+    logTerminalLifecycle(
+      "close",
+      `sessionId=${session.id} reason=${reason} active=${activeCount}/${TERMINAL_MAX_SESSIONS}`
+    );
   }
   safeClearTimer(session.idleTimer);
   session.idleTimer = null;
@@ -1006,6 +1067,12 @@ function scheduleTerminalIdleTimeout(sessionId: string) {
   if (!session) return;
   safeClearTimer(session.idleTimer);
   session.idleTimer = setTimeout(() => {
+    const liveSession = terminalSessions.get(sessionId);
+    if (!liveSession || liveSession.closedAt !== null) return;
+    logTerminalLifecycle(
+      "timeout",
+      `sessionId=${sessionId} idleMs=${TERMINAL_SESSION_IDLE_TIMEOUT_MS}`
+    );
     closeTerminalSession(sessionId, "idle-timeout");
   }, TERMINAL_SESSION_IDLE_TIMEOUT_MS);
 }
@@ -1058,14 +1125,14 @@ async function readJsonBody<T>(
 }
 
 function createTerminalSession(colsRaw?: number, rowsRaw?: number) {
-  if (terminalSessions.size >= TERMINAL_MAX_SESSIONS) {
+  if (hasReachedSessionLimit(terminalSessions.values(), TERMINAL_MAX_SESSIONS)) {
     throw new Error("terminal session limit reached");
   }
 
   const cols = clampTerminalCols(colsRaw ?? TERMINAL_DEFAULT_COLS);
   const rows = clampTerminalRows(rowsRaw ?? TERMINAL_DEFAULT_ROWS);
   const cwd = path.resolve(TERMINAL_CWD);
-  const { pty, shell } = spawnTerminalPty(cols, rows, cwd);
+  const { pty, shell, mode } = spawnTerminalPty(cols, rows, cwd);
 
   const sessionId = randomUUID();
   const now = Date.now();
@@ -1088,9 +1155,17 @@ function createTerminalSession(colsRaw?: number, rowsRaw?: number) {
   });
 
   pty.onExit(({ exitCode }) => {
+    const wasOpen = session.closedAt === null;
     session.exitCode = exitCode;
     session.closedAt = Date.now();
     session.closeReason = session.closeReason ?? "process-exit";
+    if (wasOpen) {
+      const activeCount = countActiveSessions(terminalSessions.values());
+      logTerminalLifecycle(
+        "close",
+        `sessionId=${session.id} reason=${session.closeReason} active=${activeCount}/${TERMINAL_MAX_SESSIONS}`
+      );
+    }
     safeClearTimer(session.idleTimer);
     session.idleTimer = null;
     scheduleSessionRemoval(session.id, TERMINAL_CLOSED_TTL_MS);
@@ -1098,6 +1173,11 @@ function createTerminalSession(colsRaw?: number, rowsRaw?: number) {
 
   terminalSessions.set(sessionId, session);
   scheduleTerminalIdleTimeout(sessionId);
+  const activeCount = countActiveSessions(terminalSessions.values());
+  logTerminalLifecycle(
+    "create",
+    `sessionId=${sessionId} shell=${shell} mode=${mode} active=${activeCount}/${TERMINAL_MAX_SESSIONS}`
+  );
 
   return {
     id: sessionId,
@@ -1646,6 +1726,11 @@ const server = http.createServer(async (req, res) => {
           error instanceof Error &&
           error.message === "terminal session limit reached"
         ) {
+          const activeCount = countActiveSessions(terminalSessions.values());
+          logTerminalLifecycle(
+            "limit",
+            `active=${activeCount}/${TERMINAL_MAX_SESSIONS} total=${terminalSessions.size}`
+          );
           sendError(res, 429, "Too many active terminal sessions");
           logRequest(method, url.pathname, 429, startTime);
           return;

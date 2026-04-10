@@ -46,6 +46,9 @@ A self-hosted operations dashboard for Aman's Ubuntu server.
 - **Docker/systemd endpoints fail**
   - Confirm the agent user has permission to access Docker or systemd.
   - Check your process manager logs for service errors.
+- **Terminal shows reconnect state, 429, or no output**
+  - See `TERMINAL.md` troubleshooting for session-limit and output diagnostics.
+  - Check agent logs for `[terminal]` lifecycle events (`create`, `close`, `timeout`, `limit`, `fallback`).
 
 ## Safe Update & Rollback Checklist
 1. Pull latest code and review diffs: `git pull --ff-only`

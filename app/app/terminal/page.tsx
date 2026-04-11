@@ -815,7 +815,7 @@ export default function TerminalPage() {
           <div className="mt-4 min-h-[300px] flex-1 overflow-hidden rounded-2xl border border-orange-500/30 bg-black/70 lg:min-h-0 flex flex-col">
             <div
               ref={terminalContainerRef}
-              className="themed-scrollbar flex-1 w-full overflow-hidden rounded-xl"
+              className="themed-scrollbar flex-1 w-full overflow-hidden rounded-xl px-2"
             />
           </div>
 

@@ -1053,7 +1053,10 @@ function getTerminalEnv(): NodeJS.ProcessEnv {
     COLORTERM: process.env.COLORTERM ?? "truecolor",
     CLICOLOR: process.env.CLICOLOR ?? "1",
     CLICOLOR_FORCE: process.env.CLICOLOR_FORCE ?? "1",
-    LSCOLORS: process.env.LSCOLORS ?? "DxFxCxDxBxegedabagacad",
+    // BSD/macOS ls color map: 'D' keeps directory entries in warm amber/orange tone.
+    LSCOLORS: process.env.LSCOLORS ?? "Dxfxcxdxbxegedabagacad",
+    // GNU ls color map: render directories in orange (xterm 256-color 214).
+    LS_COLORS: process.env.LS_COLORS ?? "di=38;5;214",
   };
   for (const key of blocked) {
     delete env[key];

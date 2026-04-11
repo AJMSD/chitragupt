@@ -1,5 +1,6 @@
 "use client";
 
+import "hack-font/build/web/hack.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
@@ -30,6 +31,13 @@ const FALLBACK_PROMPT_DEFAULT_USER = "operator";
 const FALLBACK_PROMPT_DEFAULT_HOST = "terminal";
 const FALLBACK_PROMPT_DEFAULT_DIR = "chitragupt";
 const FALLBACK_PROMPT_PATTERN = /(^|\r?\n)[^\r\n]*[#$%>]\s*$/;
+
+type FallbackPromptContext = {
+  user?: string;
+  host?: string;
+  cwd: string;
+  previousCwd: string | null;
+};
 
 function readLocalList(key: string): string[] {
   if (typeof window === "undefined") return [];
@@ -62,6 +70,74 @@ function basenameFromPath(value: string): string {
   if (!value) return FALLBACK_PROMPT_DEFAULT_DIR;
   const parts = value.split(/[\\/]+/).filter(Boolean);
   return parts.at(-1) ?? FALLBACK_PROMPT_DEFAULT_DIR;
+}
+
+function normalizePosixPath(value: string): string {
+  const segments = value.split("/").filter(Boolean);
+  const stack: string[] = [];
+  for (const segment of segments) {
+    if (segment === ".") continue;
+    if (segment === "..") {
+      stack.pop();
+      continue;
+    }
+    stack.push(segment);
+  }
+  return `/${stack.join("/")}`;
+}
+
+function unquote(value: string): string {
+  if (value.length < 2) return value;
+  if (
+    (value.startsWith("\"") && value.endsWith("\"")) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    return value.slice(1, -1);
+  }
+  return value;
+}
+
+function resolveNextFallbackCwd(
+  context: FallbackPromptContext,
+  command: string
+): FallbackPromptContext | null {
+  const trimmed = command.trim();
+  if (!trimmed) return null;
+
+  // Keep parser conservative: only handle simple, standalone cd commands.
+  if (/&&|\|\||;|\||\n/.test(trimmed)) {
+    return null;
+  }
+
+  const match = trimmed.match(/^cd(?:\s+(.*))?$/);
+  if (!match) return null;
+
+  const current = context.cwd || "/";
+  const argRaw = (match[1] ?? "~").trim();
+  const arg = unquote(argRaw);
+
+  if (!arg || arg === "~") {
+    return null;
+  }
+
+  if (arg === "-") {
+    if (!context.previousCwd) return null;
+    return {
+      ...context,
+      cwd: context.previousCwd,
+      previousCwd: current,
+    };
+  }
+
+  const nextPath = arg.startsWith("/")
+    ? normalizePosixPath(arg)
+    : normalizePosixPath(`${current}/${arg}`);
+
+  return {
+    ...context,
+    cwd: nextPath,
+    previousCwd: current,
+  };
 }
 
 function buildFallbackPrompt(
@@ -127,6 +203,10 @@ export default function TerminalPage() {
   const fallbackPromptRef = useRef<string>(
     buildFallbackPrompt(undefined, undefined, undefined)
   );
+  const fallbackPromptContextRef = useRef<FallbackPromptContext>({
+    cwd: "/",
+    previousCwd: null,
+  });
   const fallbackPromptVisibleRef = useRef(false);
   const fallbackAwaitingPromptRef = useRef(false);
 
@@ -188,6 +268,8 @@ export default function TerminalPage() {
     }
     sessionIdRef.current = null;
     cursorRef.current = 0;
+    fallbackPromptContextRef.current = { cwd: "/", previousCwd: null };
+    fallbackPromptRef.current = buildFallbackPrompt(undefined, undefined, undefined);
     fallbackPromptVisibleRef.current = false;
     fallbackAwaitingPromptRef.current = false;
     if (!mountedRef.current) return;
@@ -276,6 +358,8 @@ export default function TerminalPage() {
     cursorRef.current = 0;
     lineBufferRef.current = "";
     fallbackLineBufferRef.current = "";
+    fallbackPromptContextRef.current = { cwd: "/", previousCwd: null };
+    fallbackPromptRef.current = buildFallbackPrompt(undefined, undefined, undefined);
     fallbackPromptVisibleRef.current = false;
     fallbackAwaitingPromptRef.current = false;
     missingSessionErrorShownRef.current = false;
@@ -474,10 +558,16 @@ export default function TerminalPage() {
       missingSessionErrorShownRef.current = false;
       sessionIdRef.current = result.data.sessionId;
       terminalModeRef.current = result.data.mode;
+      fallbackPromptContextRef.current = {
+        user: result.data.user,
+        host: result.data.host,
+        cwd: result.data.cwd || "/",
+        previousCwd: null,
+      };
       fallbackPromptRef.current = buildFallbackPrompt(
-        result.data.user,
-        result.data.host,
-        result.data.cwd
+        fallbackPromptContextRef.current.user,
+        fallbackPromptContextRef.current.host,
+        fallbackPromptContextRef.current.cwd
       );
       setTerminalState("ready");
       startPolling(result.data.sessionId);
@@ -535,6 +625,18 @@ export default function TerminalPage() {
         }
         localEchoFallbackInput("\n");
         fallbackLineBufferRef.current = "";
+        const nextContext = resolveNextFallbackCwd(
+          fallbackPromptContextRef.current,
+          buffered
+        );
+        if (nextContext) {
+          fallbackPromptContextRef.current = nextContext;
+          fallbackPromptRef.current = buildFallbackPrompt(
+            nextContext.user,
+            nextContext.host,
+            nextContext.cwd
+          );
+        }
         fallbackPromptVisibleRef.current = false;
         fallbackAwaitingPromptRef.current = true;
         const sent = await sendInput(`${buffered}\n`);
@@ -581,7 +683,7 @@ export default function TerminalPage() {
     const term = new Terminal({
       convertEol: true,
       cursorBlink: true,
-      fontFamily: "var(--font-mono)",
+      fontFamily: "Hack, 'Hack Nerd Font', 'Hack NF', var(--font-mono), monospace",
       fontSize: 13,
       theme: {
         background: "#050302",
@@ -652,6 +754,8 @@ export default function TerminalPage() {
       fitAddonRef.current = null;
       terminalModeRef.current = "pty";
       fallbackLineBufferRef.current = "";
+      fallbackPromptContextRef.current = { cwd: "/", previousCwd: null };
+      fallbackPromptRef.current = buildFallbackPrompt(undefined, undefined, undefined);
       fallbackPromptVisibleRef.current = false;
       fallbackAwaitingPromptRef.current = false;
       pollTimerRef.current = null;
@@ -668,7 +772,7 @@ export default function TerminalPage() {
   const favoritesSet = useMemo(() => new Set(favoriteCommands), [favoriteCommands]);
 
   return (
-    <section className="space-y-6">
+    <section className="flex flex-col gap-6 lg:h-[calc(100vh-13rem)] lg:overflow-hidden">
       <div className="rounded-[28px] border border-orange-500/30 bg-[linear-gradient(155deg,rgba(18,12,8,0.92),rgba(8,5,4,0.9))] p-6 shadow-[0_0_35px_rgba(251,146,60,0.08)]">
         <h2 className="font-[var(--font-display)] text-2xl text-amber-100">
           Operator Terminal
@@ -678,7 +782,7 @@ export default function TerminalPage() {
         </p>
       </div>
 
-      <div className="grid gap-4 lg:min-h-[calc(100vh-18rem)] lg:grid-cols-[minmax(0,1fr)_320px] lg:items-stretch">
+      <div className="grid gap-4 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-stretch">
         <div className="flex min-h-[520px] flex-col rounded-[24px] border border-orange-500/25 bg-[linear-gradient(180deg,rgba(18,12,8,0.78),rgba(10,6,4,0.74))] p-5 lg:h-full lg:min-h-0">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -714,12 +818,12 @@ export default function TerminalPage() {
 
         </div>
 
-        <aside className="space-y-4">
-          <div className="rounded-[24px] border border-orange-500/20 bg-[#120c08]/70 p-4">
+        <aside className="flex min-h-0 flex-col gap-4 lg:h-full">
+          <div className="flex min-h-0 flex-1 flex-col rounded-[24px] border border-orange-500/20 bg-[#120c08]/70 p-4">
             <div className="text-xs uppercase tracking-[0.3em] text-amber-200/70">
               Favorite Commands
             </div>
-            <div className="themed-scrollbar mt-3 max-h-[330px] space-y-2 overflow-y-auto pr-1">
+            <div className="themed-scrollbar mt-3 flex-1 space-y-2 overflow-y-auto pr-1">
               {favoriteCommands.length === 0 ? (
                 <div className="text-sm text-amber-100/60">
                   Star a command from Recent to pin it here.
@@ -755,11 +859,11 @@ export default function TerminalPage() {
             </div>
           </div>
 
-          <div className="rounded-[24px] border border-orange-500/20 bg-[#120c08]/70 p-4">
+          <div className="flex min-h-0 flex-1 flex-col rounded-[24px] border border-orange-500/20 bg-[#120c08]/70 p-4">
             <div className="text-xs uppercase tracking-[0.3em] text-amber-200/70">
               Recent Commands
             </div>
-            <div className="themed-scrollbar mt-3 max-h-[330px] space-y-2 overflow-y-auto pr-1">
+            <div className="themed-scrollbar mt-3 flex-1 space-y-2 overflow-y-auto pr-1">
               {recentCommands.length === 0 ? (
                 <div className="text-sm text-amber-100/60">No commands yet.</div>
               ) : (

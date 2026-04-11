@@ -1053,7 +1053,7 @@ function getTerminalEnv(): NodeJS.ProcessEnv {
     COLORTERM: process.env.COLORTERM ?? "truecolor",
     CLICOLOR: process.env.CLICOLOR ?? "1",
     CLICOLOR_FORCE: process.env.CLICOLOR_FORCE ?? "1",
-    LSCOLORS: process.env.LSCOLORS ?? "ExFxCxDxBxegedabagacad",
+    LSCOLORS: process.env.LSCOLORS ?? "DxFxCxDxBxegedabagacad",
   };
   for (const key of blocked) {
     delete env[key];

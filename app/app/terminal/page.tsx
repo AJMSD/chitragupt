@@ -23,7 +23,7 @@ import type {
 } from "@/lib/types";
 
 const OUTPUT_POLL_MS = 350;
-const RECENT_LIMIT = 25;
+const RECENT_LIMIT = 3;
 const RECENT_STORAGE_KEY = "terminal.recent";
 const FAVORITES_STORAGE_KEY = "terminal.favorites";
 
@@ -48,11 +48,6 @@ function writeLocalList(key: string, values: string[]) {
 }
 
 type TerminalState = "connecting" | "ready" | "running" | "closed" | "error";
-
-function writeCommandMarker(term: Terminal, command: string, source: "run" | "typed") {
-  const prefix = source === "run" ? "quick" : "typed";
-  term.writeln(`\r\n\x1b[90m----- ${prefix}: ${command} -----\x1b[0m`);
-}
 
 function normalizeTerminalInput(data: string): string {
   // xterm emits Enter as carriage return; normalize for consistent shell execution.
@@ -90,6 +85,7 @@ export default function TerminalPage() {
   const mountedRef = useRef(true);
   const missingSessionErrorShownRef = useRef(false);
   const terminalModeRef = useRef<"pty" | "fallback">("pty");
+  const fallbackLineBufferRef = useRef("");
 
   const [terminalState, setTerminalState] = useState<TerminalState>("connecting");
   const [error, setError] = useState<string | null>(null);
@@ -97,7 +93,7 @@ export default function TerminalPage() {
   const [favoriteCommands, setFavoriteCommands] = useState<string[]>([]);
 
   useEffect(() => {
-    setRecentCommands(readLocalList(RECENT_STORAGE_KEY));
+    setRecentCommands(readLocalList(RECENT_STORAGE_KEY).slice(0, RECENT_LIMIT));
     setFavoriteCommands(readLocalList(FAVORITES_STORAGE_KEY));
   }, []);
 
@@ -225,6 +221,7 @@ export default function TerminalPage() {
     sessionIdRef.current = null;
     cursorRef.current = 0;
     lineBufferRef.current = "";
+    fallbackLineBufferRef.current = "";
     missingSessionErrorShownRef.current = false;
     if (!mountedRef.current) return;
   }, []);
@@ -392,6 +389,7 @@ export default function TerminalPage() {
 
       cursorRef.current = 0;
       lineBufferRef.current = "";
+      fallbackLineBufferRef.current = "";
       missingSessionErrorShownRef.current = false;
       sessionIdRef.current = result.data.sessionId;
       terminalModeRef.current = result.data.mode;
@@ -411,14 +409,6 @@ export default function TerminalPage() {
     }
     setTerminalState("running");
 
-    const term = terminalRef.current;
-    if (term) {
-      writeCommandMarker(term, prepared.display, "run");
-      if (prepared.hint) {
-        term.writeln(`\x1b[33m[hint]\x1b[0m ${prepared.hint}`);
-      }
-    }
-
     const sent = await sendInput(`${prepared.executable}\n`);
     if (!sent) {
       return;
@@ -430,7 +420,6 @@ export default function TerminalPage() {
   }, [addRecentCommand, notifyMissingSession, sendInput]);
 
   const localEchoFallbackInput = useCallback((input: string) => {
-    if (terminalModeRef.current !== "fallback") return;
     const term = terminalRef.current;
     if (!term) return;
 
@@ -449,6 +438,38 @@ export default function TerminalPage() {
       term.write(ch);
     }
   }, []);
+
+  const processFallbackInput = useCallback(async (input: string) => {
+    for (const ch of input) {
+      if (ch === "\n") {
+        const buffered = fallbackLineBufferRef.current;
+        const trimmed = buffered.trim();
+        if (trimmed) {
+          addRecentCommand(trimmed);
+        }
+        localEchoFallbackInput("\n");
+        fallbackLineBufferRef.current = "";
+        const sent = await sendInput(`${buffered}\n`);
+        if (!sent) return;
+        continue;
+      }
+
+      if (ch === "\u007f") {
+        if (fallbackLineBufferRef.current.length > 0) {
+          fallbackLineBufferRef.current = fallbackLineBufferRef.current.slice(0, -1);
+          localEchoFallbackInput("\u007f");
+        }
+        continue;
+      }
+
+      if (ch < " " || ch === "\u001b") {
+        continue;
+      }
+
+      fallbackLineBufferRef.current += ch;
+      localEchoFallbackInput(ch);
+    }
+  }, [addRecentCommand, localEchoFallbackInput, sendInput]);
 
   const reconnectSession = useCallback(async () => {
     if (!canStartLifecycleAction(reconnectingSessionRef.current)) {
@@ -483,7 +504,7 @@ export default function TerminalPage() {
         red: "#fb7185",
         green: "#86efac",
         yellow: "#fcd34d",
-        blue: "#93c5fd",
+        blue: "#f59e0b",
         magenta: "#f0abfc",
         cyan: "#67e8f9",
         white: "#f8ede5",
@@ -506,16 +527,14 @@ export default function TerminalPage() {
 
     const dataDisposable = term.onData((data) => {
       const normalizedInput = normalizeTerminalInput(data);
-      const completedCommands = handleDataForHistory(normalizedInput);
-      localEchoFallbackInput(normalizedInput);
 
-      void (async () => {
-        const sent = await sendInput(normalizedInput);
-        if (!sent) return;
-        for (const command of completedCommands) {
-          writeCommandMarker(term, command, "typed");
-        }
-      })();
+      if (terminalModeRef.current === "fallback") {
+        void processFallbackInput(normalizedInput);
+        return;
+      }
+
+      handleDataForHistory(normalizedInput);
+      void sendInput(normalizedInput);
     });
 
     const resizeHandler = () => {
@@ -537,13 +556,14 @@ export default function TerminalPage() {
       terminalRef.current = null;
       fitAddonRef.current = null;
       terminalModeRef.current = "pty";
+      fallbackLineBufferRef.current = "";
       pollTimerRef.current = null;
     };
   }, [
     closeSession,
     createSession,
     handleDataForHistory,
-    localEchoFallbackInput,
+    processFallbackInput,
     sendInput,
     sendResize,
   ]);
@@ -595,11 +615,6 @@ export default function TerminalPage() {
             className="themed-scrollbar mt-4 h-[460px] overflow-hidden rounded-2xl border border-orange-500/30 bg-black/70 p-2"
           />
 
-          <div className="mt-4 rounded-2xl border border-orange-500/20 bg-black/30 px-4 py-3 text-xs text-amber-100/75">
-            <span className="font-semibold text-amber-100">Legend:</span>{" "}
-            <span className="text-amber-200/80">typed</span> for commands entered directly in terminal, and{" "}
-            <span className="text-amber-200/80">quick</span> for commands launched from sidebar buttons.
-          </div>
         </div>
 
         <aside className="space-y-4">
@@ -607,7 +622,7 @@ export default function TerminalPage() {
             <div className="text-xs uppercase tracking-[0.3em] text-amber-200/70">
               Favorite Commands
             </div>
-            <div className="mt-3 space-y-2">
+            <div className="themed-scrollbar mt-3 max-h-[330px] space-y-2 overflow-y-auto pr-1">
               {favoriteCommands.length === 0 ? (
                 <div className="text-sm text-amber-100/60">
                   Star a command from Recent to pin it here.
@@ -647,7 +662,7 @@ export default function TerminalPage() {
             <div className="text-xs uppercase tracking-[0.3em] text-amber-200/70">
               Recent Commands
             </div>
-            <div className="themed-scrollbar mt-3 max-h-[460px] space-y-2 overflow-y-auto pr-1">
+            <div className="themed-scrollbar mt-3 max-h-[330px] space-y-2 overflow-y-auto pr-1">
               {recentCommands.length === 0 ? (
                 <div className="text-sm text-amber-100/60">No commands yet.</div>
               ) : (

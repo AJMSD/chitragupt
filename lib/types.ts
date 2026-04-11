@@ -148,6 +148,7 @@ export type TerminalSessionCreateResponse = {
   rows: number;
   cwd: string;
   shell: string;
+  mode: "pty" | "fallback";
   createdAt: string;
 };
 

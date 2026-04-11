@@ -1224,6 +1224,7 @@ function createTerminalSession(colsRaw?: number, rowsRaw?: number) {
     rows,
     cwd,
     shell,
+    mode,
     createdAt: new Date(now).toISOString(),
   };
 }
@@ -1784,6 +1785,7 @@ const server = http.createServer(async (req, res) => {
         rows: created.rows,
         cwd: created.cwd,
         shell: created.shell,
+        mode: created.mode,
         createdAt: created.createdAt,
       });
       logRequest(method, url.pathname, 200, startTime);

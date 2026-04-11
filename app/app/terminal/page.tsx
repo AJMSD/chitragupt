@@ -50,8 +50,13 @@ function writeLocalList(key: string, values: string[]) {
 type TerminalState = "connecting" | "ready" | "running" | "closed" | "error";
 
 function writeCommandMarker(term: Terminal, command: string, source: "run" | "typed") {
-  const prefix = source === "run" ? "run" : "typed";
+  const prefix = source === "run" ? "quick" : "typed";
   term.writeln(`\r\n\x1b[90m----- ${prefix}: ${command} -----\x1b[0m`);
+}
+
+function normalizeTerminalInput(data: string): string {
+  // xterm emits Enter as carriage return; normalize for consistent shell execution.
+  return data.replace(/\r/g, "\n");
 }
 
 function getStatusLabel(state: TerminalState): string {
@@ -84,15 +89,12 @@ export default function TerminalPage() {
   const reconnectingSessionRef = useRef(false);
   const mountedRef = useRef(true);
   const missingSessionErrorShownRef = useRef(false);
+  const terminalModeRef = useRef<"pty" | "fallback">("pty");
 
-  const [sessionId, setSessionId] = useState<string | null>(null);
   const [terminalState, setTerminalState] = useState<TerminalState>("connecting");
   const [error, setError] = useState<string | null>(null);
-  const [commandDraft, setCommandDraft] = useState("");
   const [recentCommands, setRecentCommands] = useState<string[]>([]);
   const [favoriteCommands, setFavoriteCommands] = useState<string[]>([]);
-  const [isSendingCommand, setIsSendingCommand] = useState(false);
-  const [runHint, setRunHint] = useState<string | null>(null);
 
   useEffect(() => {
     setRecentCommands(readLocalList(RECENT_STORAGE_KEY));
@@ -148,7 +150,6 @@ export default function TerminalPage() {
     sessionIdRef.current = null;
     cursorRef.current = 0;
     if (!mountedRef.current) return;
-    setSessionId(null);
   }, []);
 
   const sendInput = useCallback(async (input: string) => {
@@ -226,7 +227,6 @@ export default function TerminalPage() {
     lineBufferRef.current = "";
     missingSessionErrorShownRef.current = false;
     if (!mountedRef.current) return;
-    setSessionId(null);
   }, []);
 
   const handleDataForHistory = useCallback((data: string): string[] => {
@@ -394,7 +394,7 @@ export default function TerminalPage() {
       lineBufferRef.current = "";
       missingSessionErrorShownRef.current = false;
       sessionIdRef.current = result.data.sessionId;
-      setSessionId(result.data.sessionId);
+      terminalModeRef.current = result.data.mode;
       setTerminalState("ready");
       startPolling(result.data.sessionId);
     } finally {
@@ -409,27 +409,46 @@ export default function TerminalPage() {
       notifyMissingSession();
       return;
     }
-    setIsSendingCommand(true);
     setTerminalState("running");
-    setRunHint(prepared.hint);
 
     const term = terminalRef.current;
     if (term) {
       writeCommandMarker(term, prepared.display, "run");
+      if (prepared.hint) {
+        term.writeln(`\x1b[33m[hint]\x1b[0m ${prepared.hint}`);
+      }
     }
 
     const sent = await sendInput(`${prepared.executable}\n`);
     if (!sent) {
-      setIsSendingCommand(false);
       return;
     }
     addRecentCommand(prepared.display);
-    setCommandDraft("");
-    setIsSendingCommand(false);
     if (sessionIdRef.current) {
       setTerminalState("ready");
     }
   }, [addRecentCommand, notifyMissingSession, sendInput]);
+
+  const localEchoFallbackInput = useCallback((input: string) => {
+    if (terminalModeRef.current !== "fallback") return;
+    const term = terminalRef.current;
+    if (!term) return;
+
+    for (const ch of input) {
+      if (ch === "\n") {
+        term.write("\r\n");
+        continue;
+      }
+      if (ch === "\u007f") {
+        term.write("\b \b");
+        continue;
+      }
+      if (ch < " " || ch === "\u001b") {
+        continue;
+      }
+      term.write(ch);
+    }
+  }, []);
 
   const reconnectSession = useCallback(async () => {
     if (!canStartLifecycleAction(reconnectingSessionRef.current)) {
@@ -486,11 +505,17 @@ export default function TerminalPage() {
     mountedRef.current = true;
 
     const dataDisposable = term.onData((data) => {
-      const completedCommands = handleDataForHistory(data);
-      for (const command of completedCommands) {
-        writeCommandMarker(term, command, "typed");
-      }
-      void sendInput(data);
+      const normalizedInput = normalizeTerminalInput(data);
+      const completedCommands = handleDataForHistory(normalizedInput);
+      localEchoFallbackInput(normalizedInput);
+
+      void (async () => {
+        const sent = await sendInput(normalizedInput);
+        if (!sent) return;
+        for (const command of completedCommands) {
+          writeCommandMarker(term, command, "typed");
+        }
+      })();
     });
 
     const resizeHandler = () => {
@@ -511,9 +536,17 @@ export default function TerminalPage() {
       term.dispose();
       terminalRef.current = null;
       fitAddonRef.current = null;
+      terminalModeRef.current = "pty";
       pollTimerRef.current = null;
     };
-  }, [closeSession, createSession, handleDataForHistory, sendInput, sendResize]);
+  }, [
+    closeSession,
+    createSession,
+    handleDataForHistory,
+    localEchoFallbackInput,
+    sendInput,
+    sendResize,
+  ]);
 
   const favoritesSet = useMemo(() => new Set(favoriteCommands), [favoriteCommands]);
 
@@ -562,41 +595,10 @@ export default function TerminalPage() {
             className="themed-scrollbar mt-4 h-[460px] overflow-hidden rounded-2xl border border-orange-500/30 bg-black/70 p-2"
           />
 
-          <div className="mt-4 rounded-2xl border border-orange-500/20 bg-black/40 p-3">
-            <label className="text-xs uppercase tracking-[0.3em] text-amber-200/70">
-              Run Command
-            </label>
-            <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-              <input
-                className="flex-1 rounded-2xl border border-orange-500/30 bg-black/50 px-4 py-2 text-sm text-amber-50 outline-none transition placeholder:text-amber-100/40 focus:border-orange-300/70"
-                value={commandDraft}
-                onChange={(event) => setCommandDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    void runCommand(commandDraft);
-                  }
-                }}
-                placeholder="Type command and press Enter"
-              />
-              <button
-                type="button"
-                onClick={() => void runCommand(commandDraft)}
-                disabled={isSendingCommand || !commandDraft.trim() || !sessionId}
-                className="rounded-2xl border border-orange-400/50 bg-orange-400/10 px-4 py-2 text-sm text-orange-100 transition hover:border-orange-300 hover:bg-orange-400/20 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Run
-              </button>
-            </div>
-            {runHint ? (
-              <p className="mt-2 text-xs text-amber-200/70">{runHint}</p>
-            ) : null}
-          </div>
-
           <div className="mt-4 rounded-2xl border border-orange-500/20 bg-black/30 px-4 py-3 text-xs text-amber-100/75">
             <span className="font-semibold text-amber-100">Legend:</span>{" "}
-            <span className="text-amber-200/80">run</span> for commands from the Run box, and{" "}
-            <span className="text-amber-200/80">typed</span> for commands entered directly in terminal.
+            <span className="text-amber-200/80">typed</span> for commands entered directly in terminal, and{" "}
+            <span className="text-amber-200/80">quick</span> for commands launched from sidebar buttons.
           </div>
         </div>
 
@@ -620,13 +622,6 @@ export default function TerminalPage() {
                       {command}
                     </div>
                     <div className="mt-2 flex gap-2">
-                      <button
-                        type="button"
-                        className="rounded-full border border-orange-400/40 px-3 py-1 text-[10px] uppercase tracking-[0.3em] text-orange-100 transition hover:border-orange-300 hover:bg-orange-400/20"
-                        onClick={() => setCommandDraft(command)}
-                      >
-                        Insert
-                      </button>
                       <button
                         type="button"
                         className="rounded-full border border-orange-400/40 px-3 py-1 text-[10px] uppercase tracking-[0.3em] text-orange-100 transition hover:border-orange-300 hover:bg-orange-400/20"
@@ -665,13 +660,6 @@ export default function TerminalPage() {
                       {command}
                     </div>
                     <div className="mt-2 flex gap-2">
-                      <button
-                        type="button"
-                        className="rounded-full border border-orange-400/40 px-3 py-1 text-[10px] uppercase tracking-[0.3em] text-orange-100 transition hover:border-orange-300 hover:bg-orange-400/20"
-                        onClick={() => setCommandDraft(command)}
-                      >
-                        Insert
-                      </button>
                       <button
                         type="button"
                         className="rounded-full border border-orange-400/40 px-3 py-1 text-[10px] uppercase tracking-[0.3em] text-orange-100 transition hover:border-orange-300 hover:bg-orange-400/20"

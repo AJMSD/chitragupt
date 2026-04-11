@@ -685,6 +685,7 @@ export default function TerminalPage() {
       cursorBlink: true,
       fontFamily: "Hack, 'Hack Nerd Font', 'Hack NF', var(--font-mono), monospace",
       fontSize: 13,
+      lineHeight: 1.2,
       theme: {
         background: "#050302",
         foreground: "#f8ede5",
@@ -772,7 +773,7 @@ export default function TerminalPage() {
   const favoritesSet = useMemo(() => new Set(favoriteCommands), [favoriteCommands]);
 
   return (
-    <section className="flex flex-col gap-6 lg:h-[calc(100vh-13rem)] lg:overflow-hidden">
+    <section className="flex flex-col gap-6 lg:h-[calc(100dvh-15rem)] lg:min-h-0 lg:overflow-hidden">
       <div className="rounded-[28px] border border-orange-500/30 bg-[linear-gradient(155deg,rgba(18,12,8,0.92),rgba(8,5,4,0.9))] p-6 shadow-[0_0_35px_rgba(251,146,60,0.08)]">
         <h2 className="font-[var(--font-display)] text-2xl text-amber-100">
           Operator Terminal
@@ -783,7 +784,7 @@ export default function TerminalPage() {
       </div>
 
       <div className="grid gap-4 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-stretch">
-        <div className="flex min-h-[520px] flex-col rounded-[24px] border border-orange-500/25 bg-[linear-gradient(180deg,rgba(18,12,8,0.78),rgba(10,6,4,0.74))] p-5 lg:h-full lg:min-h-0">
+        <div className="flex min-h-[380px] flex-col rounded-[24px] border border-orange-500/25 bg-[linear-gradient(180deg,rgba(18,12,8,0.78),rgba(10,6,4,0.74))] p-5 lg:h-full lg:min-h-0">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <div className="text-xs uppercase tracking-[0.3em] text-amber-200/70">
@@ -811,19 +812,21 @@ export default function TerminalPage() {
             </div>
           ) : null}
 
-          <div
-            ref={terminalContainerRef}
-            className="themed-scrollbar mt-4 min-h-[420px] flex-1 overflow-hidden rounded-2xl border border-orange-500/30 bg-black/70 p-2 lg:min-h-0"
-          />
+          <div className="mt-4 min-h-[300px] flex-1 overflow-hidden rounded-2xl border border-orange-500/30 bg-black/70 p-2 lg:min-h-0">
+            <div
+              ref={terminalContainerRef}
+              className="themed-scrollbar h-full w-full overflow-hidden rounded-xl"
+            />
+          </div>
 
         </div>
 
-        <aside className="flex min-h-0 flex-col gap-4 lg:h-full">
-          <div className="flex min-h-0 flex-1 flex-col rounded-[24px] border border-orange-500/20 bg-[#120c08]/70 p-4">
+        <aside className="space-y-4 lg:h-full lg:overflow-hidden">
+          <div className="rounded-[24px] border border-orange-500/20 bg-[#120c08]/70 p-4">
             <div className="text-xs uppercase tracking-[0.3em] text-amber-200/70">
               Favorite Commands
             </div>
-            <div className="themed-scrollbar mt-3 flex-1 space-y-2 overflow-y-auto pr-1">
+            <div className="themed-scrollbar mt-3 max-h-[calc(50dvh-14rem)] min-h-[160px] space-y-2 overflow-y-auto pr-1 lg:max-h-[calc(50dvh-18rem)]">
               {favoriteCommands.length === 0 ? (
                 <div className="text-sm text-amber-100/60">
                   Star a command from Recent to pin it here.
@@ -859,11 +862,11 @@ export default function TerminalPage() {
             </div>
           </div>
 
-          <div className="flex min-h-0 flex-1 flex-col rounded-[24px] border border-orange-500/20 bg-[#120c08]/70 p-4">
+          <div className="rounded-[24px] border border-orange-500/20 bg-[#120c08]/70 p-4">
             <div className="text-xs uppercase tracking-[0.3em] text-amber-200/70">
               Recent Commands
             </div>
-            <div className="themed-scrollbar mt-3 flex-1 space-y-2 overflow-y-auto pr-1">
+            <div className="themed-scrollbar mt-3 max-h-[calc(50dvh-14rem)] min-h-[160px] space-y-2 overflow-y-auto pr-1 lg:max-h-[calc(50dvh-18rem)]">
               {recentCommands.length === 0 ? (
                 <div className="text-sm text-amber-100/60">No commands yet.</div>
               ) : (

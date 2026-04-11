@@ -150,6 +150,8 @@ export type TerminalSessionCreateResponse = {
   shell: string;
   mode: "pty" | "fallback";
   createdAt: string;
+  user?: string;
+  host?: string;
 };
 
 export type TerminalInputRequest = {

@@ -1132,6 +1132,21 @@ function appendTerminalOutput(session: TerminalSession, data: string) {
   updateTerminalActivity(session);
 }
 
+function getTerminalPromptContext(): { user?: string; host?: string } {
+  let user: string | undefined;
+  try {
+    user = os.userInfo().username;
+  } catch {
+    user = process.env.USER ?? process.env.USERNAME;
+  }
+
+  const host = os.hostname();
+  return {
+    user: user?.trim() || undefined,
+    host: host.trim() || undefined,
+  };
+}
+
 async function readJsonBody<T>(
   req: http.IncomingMessage,
   maxBytes = 1_000_000
@@ -1171,6 +1186,7 @@ function createTerminalSession(colsRaw?: number, rowsRaw?: number) {
   const cols = clampTerminalCols(colsRaw ?? TERMINAL_DEFAULT_COLS);
   const rows = clampTerminalRows(rowsRaw ?? TERMINAL_DEFAULT_ROWS);
   const cwd = path.resolve(TERMINAL_CWD);
+  const promptContext = getTerminalPromptContext();
   const { pty, shell, mode } = spawnTerminalPty(cols, rows, cwd);
 
   const sessionId = randomUUID();
@@ -1226,6 +1242,8 @@ function createTerminalSession(colsRaw?: number, rowsRaw?: number) {
     shell,
     mode,
     createdAt: new Date(now).toISOString(),
+    user: promptContext.user,
+    host: promptContext.host,
   };
 }
 
@@ -1787,6 +1805,8 @@ const server = http.createServer(async (req, res) => {
         shell: created.shell,
         mode: created.mode,
         createdAt: created.createdAt,
+        user: created.user,
+        host: created.host,
       });
       logRequest(method, url.pathname, 200, startTime);
       return;

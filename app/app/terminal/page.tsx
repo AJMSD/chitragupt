@@ -26,6 +26,10 @@ const OUTPUT_POLL_MS = 350;
 const RECENT_LIMIT = 3;
 const RECENT_STORAGE_KEY = "terminal.recent";
 const FAVORITES_STORAGE_KEY = "terminal.favorites";
+const FALLBACK_PROMPT_DEFAULT_USER = "operator";
+const FALLBACK_PROMPT_DEFAULT_HOST = "terminal";
+const FALLBACK_PROMPT_DEFAULT_DIR = "chitragupt";
+const FALLBACK_PROMPT_PATTERN = /(^|\r?\n)[^\r\n]*[#$%>]\s*$/;
 
 function readLocalList(key: string): string[] {
   if (typeof window === "undefined") return [];
@@ -52,6 +56,40 @@ type TerminalState = "connecting" | "ready" | "running" | "closed" | "error";
 function normalizeTerminalInput(data: string): string {
   // xterm emits Enter as carriage return; normalize for consistent shell execution.
   return data.replace(/\r/g, "\n");
+}
+
+function basenameFromPath(value: string): string {
+  if (!value) return FALLBACK_PROMPT_DEFAULT_DIR;
+  const parts = value.split(/[\\/]+/).filter(Boolean);
+  return parts.at(-1) ?? FALLBACK_PROMPT_DEFAULT_DIR;
+}
+
+function buildFallbackPrompt(
+  user: string | undefined,
+  host: string | undefined,
+  cwd: string | undefined
+): string {
+  const safeUser = user?.trim() || FALLBACK_PROMPT_DEFAULT_USER;
+  const safeHost = host?.trim() || FALLBACK_PROMPT_DEFAULT_HOST;
+  const safeDir = basenameFromPath(cwd?.trim() ?? "");
+  return `${safeUser}@${safeHost} ${safeDir} $ `;
+}
+
+function stripTrailingShellPrompt(chunk: string): {
+  content: string;
+  hadPrompt: boolean;
+} {
+  const normalized = chunk.replace(/\r\n/g, "\n");
+  const match = normalized.match(FALLBACK_PROMPT_PATTERN);
+  if (!match || match.index === undefined) {
+    return { content: chunk, hadPrompt: false };
+  }
+
+  const stripped = normalized.slice(0, match.index);
+  return {
+    content: stripped.replace(/\n/g, "\r\n"),
+    hadPrompt: true,
+  };
 }
 
 function getStatusLabel(state: TerminalState): string {
@@ -86,6 +124,11 @@ export default function TerminalPage() {
   const missingSessionErrorShownRef = useRef(false);
   const terminalModeRef = useRef<"pty" | "fallback">("pty");
   const fallbackLineBufferRef = useRef("");
+  const fallbackPromptRef = useRef<string>(
+    buildFallbackPrompt(undefined, undefined, undefined)
+  );
+  const fallbackPromptVisibleRef = useRef(false);
+  const fallbackAwaitingPromptRef = useRef(false);
 
   const [terminalState, setTerminalState] = useState<TerminalState>("connecting");
   const [error, setError] = useState<string | null>(null);
@@ -145,7 +188,18 @@ export default function TerminalPage() {
     }
     sessionIdRef.current = null;
     cursorRef.current = 0;
+    fallbackPromptVisibleRef.current = false;
+    fallbackAwaitingPromptRef.current = false;
     if (!mountedRef.current) return;
+  }, []);
+
+  const showFallbackPrompt = useCallback(() => {
+    if (terminalModeRef.current !== "fallback") return;
+    const term = terminalRef.current;
+    if (!term) return;
+    term.write(fallbackPromptRef.current);
+    fallbackPromptVisibleRef.current = true;
+    fallbackAwaitingPromptRef.current = false;
   }, []);
 
   const sendInput = useCallback(async (input: string) => {
@@ -222,6 +276,8 @@ export default function TerminalPage() {
     cursorRef.current = 0;
     lineBufferRef.current = "";
     fallbackLineBufferRef.current = "";
+    fallbackPromptVisibleRef.current = false;
+    fallbackAwaitingPromptRef.current = false;
     missingSessionErrorShownRef.current = false;
     if (!mountedRef.current) return;
   }, []);
@@ -319,7 +375,25 @@ export default function TerminalPage() {
         setError(null);
         const term = terminalRef.current;
         if (term) {
+          if (
+            terminalModeRef.current === "fallback" &&
+            result.data.chunks.length === 0 &&
+            !fallbackPromptVisibleRef.current
+          ) {
+            showFallbackPrompt();
+          }
+
           for (const chunk of result.data.chunks) {
+            if (terminalModeRef.current === "fallback") {
+              const stripped = stripTrailingShellPrompt(chunk.data);
+              if (stripped.content.length > 0) {
+                term.write(stripped.content);
+              }
+              if (stripped.hadPrompt) {
+                showFallbackPrompt();
+              }
+              continue;
+            }
             term.write(chunk.data);
           }
         }
@@ -347,7 +421,12 @@ export default function TerminalPage() {
     pollTimerRef.current = window.setInterval(() => {
       void poll();
     }, OUTPUT_POLL_MS);
-  }, [markSessionUnavailable, notifyMissingSession, writeTerminalError]);
+  }, [
+    markSessionUnavailable,
+    notifyMissingSession,
+    showFallbackPrompt,
+    writeTerminalError,
+  ]);
 
   const createSession = useCallback(async () => {
     if (!canStartLifecycleAction(creatingSessionRef.current)) {
@@ -390,9 +469,16 @@ export default function TerminalPage() {
       cursorRef.current = 0;
       lineBufferRef.current = "";
       fallbackLineBufferRef.current = "";
+      fallbackPromptVisibleRef.current = false;
+      fallbackAwaitingPromptRef.current = false;
       missingSessionErrorShownRef.current = false;
       sessionIdRef.current = result.data.sessionId;
       terminalModeRef.current = result.data.mode;
+      fallbackPromptRef.current = buildFallbackPrompt(
+        result.data.user,
+        result.data.host,
+        result.data.cwd
+      );
       setTerminalState("ready");
       startPolling(result.data.sessionId);
     } finally {
@@ -449,6 +535,8 @@ export default function TerminalPage() {
         }
         localEchoFallbackInput("\n");
         fallbackLineBufferRef.current = "";
+        fallbackPromptVisibleRef.current = false;
+        fallbackAwaitingPromptRef.current = true;
         const sent = await sendInput(`${buffered}\n`);
         if (!sent) return;
         continue;
@@ -540,6 +628,12 @@ export default function TerminalPage() {
     const resizeHandler = () => {
       void sendResize();
     };
+
+    const resizeObserver = new ResizeObserver(() => {
+      void sendResize();
+    });
+    resizeObserver.observe(container);
+
     window.addEventListener("resize", resizeHandler);
 
     void createSession();
@@ -547,6 +641,7 @@ export default function TerminalPage() {
     return () => {
       mountedRef.current = false;
       dataDisposable.dispose();
+      resizeObserver.disconnect();
       window.removeEventListener("resize", resizeHandler);
       if (pollTimerRef.current !== null) {
         window.clearInterval(pollTimerRef.current);
@@ -557,6 +652,8 @@ export default function TerminalPage() {
       fitAddonRef.current = null;
       terminalModeRef.current = "pty";
       fallbackLineBufferRef.current = "";
+      fallbackPromptVisibleRef.current = false;
+      fallbackAwaitingPromptRef.current = false;
       pollTimerRef.current = null;
     };
   }, [
@@ -581,8 +678,8 @@ export default function TerminalPage() {
         </p>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="rounded-[24px] border border-orange-500/25 bg-[linear-gradient(180deg,rgba(18,12,8,0.78),rgba(10,6,4,0.74))] p-5">
+      <div className="grid gap-4 lg:min-h-[calc(100vh-18rem)] lg:grid-cols-[minmax(0,1fr)_320px] lg:items-stretch">
+        <div className="flex min-h-[520px] flex-col rounded-[24px] border border-orange-500/25 bg-[linear-gradient(180deg,rgba(18,12,8,0.78),rgba(10,6,4,0.74))] p-5 lg:h-full lg:min-h-0">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <div className="text-xs uppercase tracking-[0.3em] text-amber-200/70">
@@ -612,7 +709,7 @@ export default function TerminalPage() {
 
           <div
             ref={terminalContainerRef}
-            className="themed-scrollbar mt-4 h-[460px] overflow-hidden rounded-2xl border border-orange-500/30 bg-black/70 p-2"
+            className="themed-scrollbar mt-4 min-h-[420px] flex-1 overflow-hidden rounded-2xl border border-orange-500/30 bg-black/70 p-2 lg:min-h-0"
           />
 
         </div>

@@ -33,7 +33,7 @@ export default async function AppLayout({
         <div className="absolute bottom-0 right-0 h-96 w-96 rounded-full bg-amber-300/20 blur-[140px]" />
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(251,146,60,0.18),_transparent_55%),radial-gradient(circle_at_bottom,_rgba(249,115,22,0.18),_transparent_60%)]" />
       </div>
-      <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 py-8">
+      <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-8 px-6 py-8">
         <PrivateHeader />
 
         <nav className="flex flex-wrap gap-3">
@@ -84,7 +84,7 @@ export default async function AppLayout({
           </Link>
         </nav>
 
-        <main>{children}</main>
+        <main className="flex flex-1 min-h-0">{children}</main>
       </div>
     </div>
   );

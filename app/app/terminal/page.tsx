@@ -739,6 +739,20 @@ export default function TerminalPage() {
 
     window.addEventListener("resize", resizeHandler);
 
+    // Ensure session is closed even during page unload using sendBeacon (guaranteed delivery)
+    const handleBeforeUnload = () => {
+      const activeSession = sessionIdRef.current;
+      if (activeSession) {
+        navigator.sendBeacon(
+          "/api/private/terminal/close",
+          new Blob([JSON.stringify({ sessionId: activeSession })], {
+            type: "application/json",
+          })
+        );
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+
     void createSession();
 
     return () => {
@@ -746,6 +760,7 @@ export default function TerminalPage() {
       dataDisposable.dispose();
       resizeObserver.disconnect();
       window.removeEventListener("resize", resizeHandler);
+      window.removeEventListener("beforeunload", handleBeforeUnload);
       if (pollTimerRef.current !== null) {
         window.clearInterval(pollTimerRef.current);
       }

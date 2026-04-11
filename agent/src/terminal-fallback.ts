@@ -3,6 +3,11 @@ export type TerminalFallbackAttempt = {
   args: string[];
 };
 
+export function normalizeFallbackOutputChunk(chunk: string): string {
+  // Pipe-mode shells usually emit LF-only output; convert to CRLF for terminal rendering.
+  return chunk.replace(/\r?\n/g, "\r\n");
+}
+
 function shellBaseName(shell: string): string {
   const normalized = shell.replace(/\\/g, "/");
   const parts = normalized.split("/").filter(Boolean);
@@ -20,26 +25,11 @@ export function resolveFallbackShellArgs(shell: string): string[][] {
   return [[]];
 }
 
-function fallbackPriority(shell: string): number {
-  const base = shellBaseName(shell);
-  if (base === "bash" || base === "sh") return 0;
-  if (base === "fish") return 1;
-  if (base === "zsh") return 2;
-  return 3;
-}
-
 export function buildTerminalFallbackAttempts(
   shells: string[]
 ): TerminalFallbackAttempt[] {
   const attempts: TerminalFallbackAttempt[] = [];
-  const prioritized = [...shells]
-    .map((shell, index) => ({ shell, index }))
-    .sort((a, b) => {
-      const scoreDiff = fallbackPriority(a.shell) - fallbackPriority(b.shell);
-      if (scoreDiff !== 0) return scoreDiff;
-      return a.index - b.index;
-    })
-    .map(({ shell }) => shell);
+  const prioritized = [...shells];
 
   for (const shell of prioritized) {
     const argsList = resolveFallbackShellArgs(shell);

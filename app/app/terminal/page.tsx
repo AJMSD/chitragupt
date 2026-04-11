@@ -13,6 +13,7 @@ import {
   formatTerminalApiError,
   isTerminalSessionUnavailable,
 } from "./errors";
+import { prepareRunCommand } from "./command-format";
 import type {
   TerminalCloseResponse,
   TerminalInputResponse,
@@ -47,6 +48,11 @@ function writeLocalList(key: string, values: string[]) {
 }
 
 type TerminalState = "connecting" | "ready" | "running" | "closed" | "error";
+
+function writeCommandMarker(term: Terminal, command: string, source: "run" | "typed") {
+  const prefix = source === "run" ? "run" : "typed";
+  term.writeln(`\r\n\x1b[90m----- ${prefix}: ${command} -----\x1b[0m`);
+}
 
 function getStatusLabel(state: TerminalState): string {
   switch (state) {
@@ -83,13 +89,15 @@ export default function TerminalPage() {
   const [terminalState, setTerminalState] = useState<TerminalState>("connecting");
   const [error, setError] = useState<string | null>(null);
   const [commandDraft, setCommandDraft] = useState("");
-  const [recentCommands, setRecentCommands] = useState<string[]>(() =>
-    readLocalList(RECENT_STORAGE_KEY)
-  );
-  const [favoriteCommands, setFavoriteCommands] = useState<string[]>(() =>
-    readLocalList(FAVORITES_STORAGE_KEY)
-  );
+  const [recentCommands, setRecentCommands] = useState<string[]>([]);
+  const [favoriteCommands, setFavoriteCommands] = useState<string[]>([]);
   const [isSendingCommand, setIsSendingCommand] = useState(false);
+  const [runHint, setRunHint] = useState<string | null>(null);
+
+  useEffect(() => {
+    setRecentCommands(readLocalList(RECENT_STORAGE_KEY));
+    setFavoriteCommands(readLocalList(FAVORITES_STORAGE_KEY));
+  }, []);
 
   const addRecentCommand = useCallback((command: string) => {
     const trimmed = command.trim();
@@ -221,7 +229,8 @@ export default function TerminalPage() {
     setSessionId(null);
   }, []);
 
-  const handleDataForHistory = useCallback((data: string) => {
+  const handleDataForHistory = useCallback((data: string): string[] => {
+    const completedCommands: string[] = [];
     for (const ch of data) {
       if (escapeSequenceRef.current) {
         const code = ch.charCodeAt(0);
@@ -238,6 +247,7 @@ export default function TerminalPage() {
         const command = lineBufferRef.current.trim();
         if (command.length > 0) {
           addRecentCommand(command);
+          completedCommands.push(command);
         }
         lineBufferRef.current = "";
         continue;
@@ -254,6 +264,7 @@ export default function TerminalPage() {
         lineBufferRef.current = lineBufferRef.current.slice(-400);
       }
     }
+    return completedCommands;
   }, [addRecentCommand]);
 
   const startPolling = useCallback((activeSessionId: string) => {
@@ -392,20 +403,27 @@ export default function TerminalPage() {
   }, [startPolling, writeTerminalError]);
 
   const runCommand = useCallback(async (command: string) => {
-    const trimmed = command.trim();
-    if (!trimmed) return;
+    const prepared = prepareRunCommand(command);
+    if (!prepared.executable) return;
     if (!sessionIdRef.current) {
       notifyMissingSession();
       return;
     }
     setIsSendingCommand(true);
     setTerminalState("running");
-    const sent = await sendInput(`${trimmed}\n`);
+    setRunHint(prepared.hint);
+
+    const term = terminalRef.current;
+    if (term) {
+      writeCommandMarker(term, prepared.display, "run");
+    }
+
+    const sent = await sendInput(`${prepared.executable}\n`);
     if (!sent) {
       setIsSendingCommand(false);
       return;
     }
-    addRecentCommand(trimmed);
+    addRecentCommand(prepared.display);
     setCommandDraft("");
     setIsSendingCommand(false);
     if (sessionIdRef.current) {
@@ -433,7 +451,7 @@ export default function TerminalPage() {
     if (!container) return;
 
     const term = new Terminal({
-      convertEol: false,
+      convertEol: true,
       cursorBlink: true,
       fontFamily: "var(--font-mono)",
       fontSize: 13,
@@ -468,7 +486,10 @@ export default function TerminalPage() {
     mountedRef.current = true;
 
     const dataDisposable = term.onData((data) => {
-      handleDataForHistory(data);
+      const completedCommands = handleDataForHistory(data);
+      for (const command of completedCommands) {
+        writeCommandMarker(term, command, "typed");
+      }
       void sendInput(data);
     });
 
@@ -498,7 +519,7 @@ export default function TerminalPage() {
 
   return (
     <section className="space-y-6">
-      <div className="rounded-[28px] border border-orange-500/20 bg-[#120c08]/80 p-6">
+      <div className="rounded-[28px] border border-orange-500/30 bg-[linear-gradient(155deg,rgba(18,12,8,0.92),rgba(8,5,4,0.9))] p-6 shadow-[0_0_35px_rgba(251,146,60,0.08)]">
         <h2 className="font-[var(--font-display)] text-2xl text-amber-100">
           Operator Terminal
         </h2>
@@ -508,7 +529,7 @@ export default function TerminalPage() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="rounded-[24px] border border-orange-500/20 bg-[#120c08]/70 p-5">
+        <div className="rounded-[24px] border border-orange-500/25 bg-[linear-gradient(180deg,rgba(18,12,8,0.78),rgba(10,6,4,0.74))] p-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <div className="text-xs uppercase tracking-[0.3em] text-amber-200/70">
@@ -538,7 +559,7 @@ export default function TerminalPage() {
 
           <div
             ref={terminalContainerRef}
-            className="themed-scrollbar mt-4 h-[460px] overflow-hidden rounded-2xl border border-orange-500/20 bg-black/60 p-2"
+            className="themed-scrollbar mt-4 h-[460px] overflow-hidden rounded-2xl border border-orange-500/30 bg-black/70 p-2"
           />
 
           <div className="mt-4 rounded-2xl border border-orange-500/20 bg-black/40 p-3">
@@ -567,6 +588,15 @@ export default function TerminalPage() {
                 Run
               </button>
             </div>
+            {runHint ? (
+              <p className="mt-2 text-xs text-amber-200/70">{runHint}</p>
+            ) : null}
+          </div>
+
+          <div className="mt-4 rounded-2xl border border-orange-500/20 bg-black/30 px-4 py-3 text-xs text-amber-100/75">
+            <span className="font-semibold text-amber-100">Legend:</span>{" "}
+            <span className="text-amber-200/80">run</span> for commands from the Run box, and{" "}
+            <span className="text-amber-200/80">typed</span> for commands entered directly in terminal.
           </div>
         </div>
 

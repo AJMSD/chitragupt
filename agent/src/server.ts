@@ -1,7 +1,11 @@
 ﻿import "dotenv/config";
 import http from "node:http";
 import os from "node:os";
-import { execFile, spawn as spawnProcess } from "node:child_process";
+import {
+  execFile,
+  spawn as spawnProcess,
+  type ChildProcessWithoutNullStreams,
+} from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createReadStream, promises as fs } from "node:fs";
 import path from "node:path";
@@ -11,7 +15,10 @@ import {
   countActiveSessions,
   hasReachedSessionLimit,
 } from "./terminal-session-accounting";
-import { buildTerminalFallbackAttempts } from "./terminal-fallback";
+import {
+  buildTerminalFallbackAttempts,
+  normalizeFallbackOutputChunk,
+} from "./terminal-fallback";
 
 const execFileAsync = promisify(execFile);
 
@@ -953,11 +960,38 @@ function spawnTerminalPty(
   let processError: unknown = null;
   for (const attempt of buildTerminalFallbackAttempts(shells)) {
     try {
-      const child = spawnProcess(attempt.shell, attempt.args, {
-        cwd,
-        env,
-        stdio: "pipe",
-      });
+      let child: ChildProcessWithoutNullStreams | undefined;
+      let fallbackTransport: "script" | "pipe" = "pipe";
+
+      const canUseScriptFallback =
+        process.platform !== "win32" &&
+        Boolean(process.stdin.isTTY) &&
+        Boolean(process.stdout.isTTY);
+
+      if (canUseScriptFallback) {
+        try {
+          child = spawnProcess(
+            "script",
+            ["-q", "/dev/null", attempt.shell, ...attempt.args],
+            {
+              cwd,
+              env,
+              stdio: "pipe",
+            }
+          ) as ChildProcessWithoutNullStreams;
+          fallbackTransport = "script";
+        } catch {
+          child = undefined;
+        }
+      }
+
+      if (!child) {
+        child = spawnProcess(attempt.shell, attempt.args, {
+          cwd,
+          env,
+          stdio: "pipe",
+        }) as ChildProcessWithoutNullStreams;
+      }
 
       const fallback: TerminalProcess = {
         write(input: string) {
@@ -973,14 +1007,14 @@ function spawnTerminalPty(
         },
         onData(listener: (data: string) => void) {
           child.stdout.on("data", (chunk: Buffer | string) => {
-            listener(String(chunk));
+            listener(normalizeFallbackOutputChunk(String(chunk)));
           });
           child.stderr.on("data", (chunk: Buffer | string) => {
-            listener(String(chunk));
+            listener(normalizeFallbackOutputChunk(String(chunk)));
           });
         },
         onExit(listener: (event: { exitCode: number }) => void) {
-          child.on("exit", (code) => {
+          child.on("exit", (code: number | null) => {
             listener({ exitCode: typeof code === "number" ? code : 0 });
           });
         },
@@ -993,7 +1027,7 @@ function spawnTerminalPty(
       const argSuffix = attempt.args.length > 0 ? ` args=${attempt.args.join(" ")}` : "";
       logTerminalLifecycle(
         "fallback",
-        `shell=${attempt.shell}${argSuffix} reason=${ptyReason}`
+        `shell=${attempt.shell}${argSuffix} transport=${fallbackTransport} reason=${ptyReason}`
       );
 
       return { pty: fallback, shell: attempt.shell, mode: "fallback" };
@@ -1015,6 +1049,11 @@ function getTerminalEnv(): NodeJS.ProcessEnv {
   const env: Record<string, string | undefined> = {
     ...process.env,
     NODE_ENV: process.env.NODE_ENV ?? "development",
+    TERM: process.env.TERM ?? "xterm-256color",
+    COLORTERM: process.env.COLORTERM ?? "truecolor",
+    CLICOLOR: process.env.CLICOLOR ?? "1",
+    CLICOLOR_FORCE: process.env.CLICOLOR_FORCE ?? "1",
+    LSCOLORS: process.env.LSCOLORS ?? "ExFxCxDxBxegedabagacad",
   };
   for (const key of blocked) {
     delete env[key];

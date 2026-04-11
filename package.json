@@ -9,7 +9,7 @@
         "build": "next build",
         "start": "next start",
         "lint": "eslint",
-        "test:terminal": "tsx --test agent/src/terminal-session-accounting.test.ts agent/src/terminal-fallback.test.ts app/app/terminal/lifecycle.test.ts app/app/terminal/errors.test.ts",
+        "test:terminal": "tsx --test agent/src/terminal-session-accounting.test.ts agent/src/terminal-fallback.test.ts app/app/terminal/lifecycle.test.ts app/app/terminal/errors.test.ts app/app/terminal/command-format.test.ts",
         "agent:build": "tsc -p agent/tsconfig.json",
         "agent:dev": "tsx watch -r dotenv/config agent/src/server.ts",
         "agent:start": "node -r dotenv/config agent/dist/server.js"

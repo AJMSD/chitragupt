@@ -773,7 +773,7 @@ export default function TerminalPage() {
   const favoritesSet = useMemo(() => new Set(favoriteCommands), [favoriteCommands]);
 
   return (
-    <section className="flex flex-col gap-6 lg:h-[calc(100dvh-15rem)] lg:min-h-0 lg:overflow-hidden">
+    <section className="flex flex-col gap-6 lg:flex-1 lg:min-h-0 lg:overflow-hidden">
       <div className="rounded-[28px] border border-orange-500/30 bg-[linear-gradient(155deg,rgba(18,12,8,0.92),rgba(8,5,4,0.9))] p-6 shadow-[0_0_35px_rgba(251,146,60,0.08)]">
         <h2 className="font-[var(--font-display)] text-2xl text-amber-100">
           Operator Terminal
@@ -812,10 +812,10 @@ export default function TerminalPage() {
             </div>
           ) : null}
 
-          <div className="mt-4 min-h-[300px] flex-1 overflow-hidden rounded-2xl border border-orange-500/30 bg-black/70 p-2 lg:min-h-0">
+          <div className="mt-4 min-h-[300px] flex-1 overflow-hidden rounded-2xl border border-orange-500/30 bg-black/70 lg:min-h-0 flex flex-col">
             <div
               ref={terminalContainerRef}
-              className="themed-scrollbar h-full w-full overflow-hidden rounded-xl"
+              className="themed-scrollbar flex-1 w-full overflow-hidden rounded-xl"
             />
           </div>
 
@@ -826,7 +826,7 @@ export default function TerminalPage() {
             <div className="text-xs uppercase tracking-[0.3em] text-amber-200/70">
               Favorite Commands
             </div>
-            <div className="themed-scrollbar mt-3 max-h-[calc(50dvh-14rem)] min-h-[160px] space-y-2 overflow-y-auto pr-1 lg:max-h-[calc(50dvh-18rem)]">
+            <div className="themed-scrollbar mt-3 max-h-96 min-h-[160px] space-y-2 overflow-y-auto pr-1">
               {favoriteCommands.length === 0 ? (
                 <div className="text-sm text-amber-100/60">
                   Star a command from Recent to pin it here.
@@ -866,7 +866,7 @@ export default function TerminalPage() {
             <div className="text-xs uppercase tracking-[0.3em] text-amber-200/70">
               Recent Commands
             </div>
-            <div className="themed-scrollbar mt-3 max-h-[calc(50dvh-14rem)] min-h-[160px] space-y-2 overflow-y-auto pr-1 lg:max-h-[calc(50dvh-18rem)]">
+            <div className="themed-scrollbar mt-3 max-h-96 min-h-[160px] space-y-2 overflow-y-auto pr-1">
               {recentCommands.length === 0 ? (
                 <div className="text-sm text-amber-100/60">No commands yet.</div>
               ) : (

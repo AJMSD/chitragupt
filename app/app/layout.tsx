@@ -27,7 +27,7 @@ export default async function AppLayout({
   }
 
   return (
-    <div className="min-h-screen bg-[#080503] text-slate-100">
+    <div className="flex flex-col min-h-screen bg-[#080503] text-slate-100">
       <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
         <div className="absolute -top-32 left-1/3 h-72 w-72 rounded-full bg-orange-500/25 blur-[140px]" />
         <div className="absolute bottom-0 right-0 h-96 w-96 rounded-full bg-amber-300/20 blur-[140px]" />

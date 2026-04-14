@@ -17,7 +17,9 @@ import {
 } from "./terminal-session-accounting";
 import {
   buildTerminalFallbackAttempts,
+  inferFallbackCwdFromChunk,
   normalizeFallbackOutputChunk,
+  shouldUseFallbackClientEcho,
 } from "./terminal-fallback";
 
 const execFileAsync = promisify(execFile);
@@ -258,8 +260,10 @@ type TerminalProcess = {
 type TerminalSession = {
   id: string;
   pty: TerminalProcess;
+  mode: "pty" | "fallback";
   output: TerminalOutputChunk[];
   cursor: number;
+  lastKnownCwd: string | null;
   createdAt: number;
   updatedAt: number;
   closedAt: number | null;
@@ -937,7 +941,12 @@ function spawnTerminalPty(
   cols: number,
   rows: number,
   cwd: string
-): { pty: TerminalProcess; shell: string; mode: "pty" | "fallback" } {
+): {
+  pty: TerminalProcess;
+  shell: string;
+  mode: "pty" | "fallback";
+  fallbackClientEcho: boolean;
+} {
   const env = getTerminalEnv();
   const shells = resolveTerminalShellCandidates();
   let ptyError: unknown = null;
@@ -951,7 +960,7 @@ function spawnTerminalPty(
         cwd,
         env,
       });
-      return { pty, shell, mode: "pty" };
+      return { pty, shell, mode: "pty", fallbackClientEcho: false };
     } catch (error) {
       ptyError = error;
     }
@@ -1030,7 +1039,12 @@ function spawnTerminalPty(
         `shell=${attempt.shell}${argSuffix} transport=${fallbackTransport} reason=${ptyReason}`
       );
 
-      return { pty: fallback, shell: attempt.shell, mode: "fallback" };
+      return {
+        pty: fallback,
+        shell: attempt.shell,
+        mode: "fallback",
+        fallbackClientEcho: shouldUseFallbackClientEcho(fallbackTransport),
+      };
     } catch (error) {
       processError = error;
     }
@@ -1127,6 +1141,12 @@ function updateTerminalActivity(session: TerminalSession) {
 
 function appendTerminalOutput(session: TerminalSession, data: string) {
   if (!data) return;
+  if (session.mode === "fallback") {
+    const inferredCwd = inferFallbackCwdFromChunk(data);
+    if (inferredCwd) {
+      session.lastKnownCwd = inferredCwd;
+    }
+  }
   session.cursor += 1;
   session.output.push({ index: session.cursor, data });
   if (session.output.length > TERMINAL_MAX_CHUNKS) {
@@ -1190,15 +1210,21 @@ function createTerminalSession(colsRaw?: number, rowsRaw?: number) {
   const rows = clampTerminalRows(rowsRaw ?? TERMINAL_DEFAULT_ROWS);
   const cwd = path.resolve(TERMINAL_CWD);
   const promptContext = getTerminalPromptContext();
-  const { pty, shell, mode } = spawnTerminalPty(cols, rows, cwd);
+  const { pty, shell, mode, fallbackClientEcho } = spawnTerminalPty(
+    cols,
+    rows,
+    cwd
+  );
 
   const sessionId = randomUUID();
   const now = Date.now();
   const session: TerminalSession = {
     id: sessionId,
     pty,
+    mode,
     output: [],
     cursor: 0,
+    lastKnownCwd: null,
     createdAt: now,
     updatedAt: now,
     closedAt: null,
@@ -1244,6 +1270,7 @@ function createTerminalSession(colsRaw?: number, rowsRaw?: number) {
     cwd,
     shell,
     mode,
+    fallbackClientEcho,
     createdAt: new Date(now).toISOString(),
     user: promptContext.user,
     host: promptContext.host,
@@ -1807,6 +1834,7 @@ const server = http.createServer(async (req, res) => {
         cwd: created.cwd,
         shell: created.shell,
         mode: created.mode,
+        fallbackClientEcho: created.fallbackClientEcho,
         createdAt: created.createdAt,
         user: created.user,
         host: created.host,
@@ -1918,6 +1946,10 @@ const server = http.createServer(async (req, res) => {
         sessionId: session.id,
         cursor: session.cursor,
         chunks,
+        cwd:
+          session.mode === "fallback" && session.lastKnownCwd
+            ? session.lastKnownCwd
+            : undefined,
         closed: session.closedAt !== null,
         exitCode: session.exitCode,
         closeReason: session.closeReason,

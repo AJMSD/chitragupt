@@ -12,6 +12,10 @@ test("isTerminalSessionUnavailable detects closed or missing session", () => {
     true
   );
   assert.equal(
+    isTerminalSessionUnavailable({ status: 429, message: "Too many active terminal sessions" }),
+    true
+  );
+  assert.equal(
     isTerminalSessionUnavailable({ status: 500, message: "Internal error" }),
     false
   );
@@ -29,5 +33,9 @@ test("formatTerminalApiError returns actionable terminal messages", () => {
   assert.equal(
     formatTerminalApiError({ status: 413, message: "Terminal input too large" }),
     "Terminal input exceeds the allowed size."
+  );
+  assert.equal(
+    formatTerminalApiError({ status: 429, message: "Too many active terminal sessions" }),
+    "Too many active terminal sessions. Wait a moment, then reconnect."
   );
 });

@@ -149,6 +149,7 @@ export type TerminalSessionCreateResponse = {
   cwd: string;
   shell: string;
   mode: "pty" | "fallback";
+  fallbackClientEcho?: boolean;
   createdAt: string;
   user?: string;
   host?: string;
@@ -193,6 +194,7 @@ export type TerminalOutputResponse = {
   sessionId: string;
   cursor: number;
   chunks: TerminalOutputChunk[];
+  cwd?: string;
   closed: boolean;
   exitCode: number | null;
   closeReason: string | null;

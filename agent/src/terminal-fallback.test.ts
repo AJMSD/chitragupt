@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildTerminalFallbackAttempts,
+  inferFallbackCwdFromChunk,
   normalizeFallbackOutputChunk,
+  normalizeFallbackCwdCandidate,
   resolveFallbackShellArgs,
+  shouldUseFallbackClientEcho,
 } from "./terminal-fallback";
 
 test("resolveFallbackShellArgs prefers interactive flags for known shells", () => {
@@ -31,6 +34,14 @@ test("buildTerminalFallbackAttempts keeps provided shell order with retries", ()
   ]);
 });
 
+test("shouldUseFallbackClientEcho enables local echo for pipe transport", () => {
+  assert.equal(shouldUseFallbackClientEcho("pipe"), true);
+});
+
+test("shouldUseFallbackClientEcho disables local echo for script transport", () => {
+  assert.equal(shouldUseFallbackClientEcho("script"), false);
+});
+
 test("normalizeFallbackOutputChunk converts LF-only output to CRLF", () => {
   assert.equal(normalizeFallbackOutputChunk("a\nb\n"), "a\r\nb\r\n");
 });
@@ -50,4 +61,34 @@ test("normalizeFallbackOutputChunk preserves ANSI escapes", () => {
   const input = "\x1b[32mok\x1b[0m\n";
   const output = normalizeFallbackOutputChunk(input);
   assert.equal(output, "\x1b[32mok\x1b[0m\r\n");
+});
+
+test("normalizeFallbackCwdCandidate accepts and normalizes absolute paths", () => {
+  assert.equal(normalizeFallbackCwdCandidate(" /Users/ajmsd/../ajmsd "), "/Users/ajmsd");
+});
+
+test("normalizeFallbackCwdCandidate rejects non-absolute paths", () => {
+  assert.equal(normalizeFallbackCwdCandidate("Users/ajmsd"), null);
+  assert.equal(normalizeFallbackCwdCandidate("./tmp"), null);
+});
+
+test("inferFallbackCwdFromChunk infers cwd from output before prompt boundary", () => {
+  const chunk = "pwd\r\n/Users/ajmsd\r\najmsd@host ajmsd $ ";
+  assert.equal(inferFallbackCwdFromChunk(chunk), "/Users/ajmsd");
+});
+
+test("inferFallbackCwdFromChunk ignores chunks without prompt boundary", () => {
+  const chunk = "pwd\r\n/Users/ajmsd\r\n";
+  assert.equal(inferFallbackCwdFromChunk(chunk), null);
+});
+
+test("inferFallbackCwdFromChunk ignores non-absolute cwd candidates", () => {
+  const chunk = "pwd\r\najmsd\r\najmsd@host ajmsd $ ";
+  assert.equal(inferFallbackCwdFromChunk(chunk), null);
+});
+
+test("inferFallbackCwdFromChunk handles ANSI/control sequences", () => {
+  const chunk =
+    "\x1b[32mpwd\x1b[0m\r\n\x1b[36m/Users/ajmsd\x1b[0m\r\n\x1b[33majmsd@host ajmsd $ \x1b[0m";
+  assert.equal(inferFallbackCwdFromChunk(chunk), "/Users/ajmsd");
 });

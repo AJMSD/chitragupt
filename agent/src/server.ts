@@ -1,10 +1,26 @@
 ﻿import "dotenv/config";
 import http from "node:http";
 import os from "node:os";
-import { execFile } from "node:child_process";
+import {
+  execFile,
+  spawn as spawnProcess,
+  type ChildProcessWithoutNullStreams,
+} from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { createReadStream, promises as fs } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
+import { spawn as spawnPty } from "node-pty";
+import {
+  countActiveSessions,
+  hasReachedSessionLimit,
+} from "./terminal-session-accounting";
+import {
+  buildTerminalFallbackAttempts,
+  inferFallbackCwdFromChunk,
+  normalizeFallbackOutputChunk,
+  shouldUseFallbackClientEcho,
+} from "./terminal-fallback";
 
 const execFileAsync = promisify(execFile);
 
@@ -44,6 +60,73 @@ const LOG_REDACT_KEYS = [
   "AGENT_PRIVATE_VALUE",
 ] as const;
 const LOG_REDACT_MIN_LENGTH = 6;
+const TERMINAL_DEFAULT_COLS_RAW = Number.parseInt(
+  process.env.TERMINAL_DEFAULT_COLS ?? "120",
+  10
+);
+const TERMINAL_DEFAULT_ROWS_RAW = Number.parseInt(
+  process.env.TERMINAL_DEFAULT_ROWS ?? "32",
+  10
+);
+const TERMINAL_MIN_COLS = 40;
+const TERMINAL_MAX_COLS = 240;
+const TERMINAL_MIN_ROWS = 12;
+const TERMINAL_MAX_ROWS = 80;
+const TERMINAL_DEFAULT_COLS = Number.isFinite(TERMINAL_DEFAULT_COLS_RAW)
+  ? TERMINAL_DEFAULT_COLS_RAW
+  : 120;
+const TERMINAL_DEFAULT_ROWS = Number.isFinite(TERMINAL_DEFAULT_ROWS_RAW)
+  ? TERMINAL_DEFAULT_ROWS_RAW
+  : 32;
+const TERMINAL_SESSION_IDLE_TIMEOUT_MS_RAW = Number.parseInt(
+  process.env.TERMINAL_SESSION_IDLE_TIMEOUT_MS ?? "900000",
+  10
+);
+const TERMINAL_SESSION_IDLE_TIMEOUT_MS = Number.isFinite(
+  TERMINAL_SESSION_IDLE_TIMEOUT_MS_RAW
+)
+  ? TERMINAL_SESSION_IDLE_TIMEOUT_MS_RAW
+  : 900000;
+const TERMINAL_CLOSED_TTL_MS_RAW = Number.parseInt(
+  process.env.TERMINAL_CLOSED_TTL_MS ?? "30000",
+  10
+);
+const TERMINAL_CLOSED_TTL_MS = Number.isFinite(TERMINAL_CLOSED_TTL_MS_RAW)
+  ? TERMINAL_CLOSED_TTL_MS_RAW
+  : 30000;
+const TERMINAL_MAX_CHUNKS_RAW = Number.parseInt(
+  process.env.TERMINAL_MAX_CHUNKS ?? "1500",
+  10
+);
+const TERMINAL_MAX_CHUNKS = Number.isFinite(TERMINAL_MAX_CHUNKS_RAW)
+  ? TERMINAL_MAX_CHUNKS_RAW
+  : 1500;
+const TERMINAL_MAX_INPUT_BYTES_RAW = Number.parseInt(
+  process.env.TERMINAL_MAX_INPUT_BYTES ?? "16384",
+  10
+);
+const TERMINAL_MAX_INPUT_BYTES = Number.isFinite(TERMINAL_MAX_INPUT_BYTES_RAW)
+  ? TERMINAL_MAX_INPUT_BYTES_RAW
+  : 16384;
+const TERMINAL_MAX_SESSIONS_RAW = Number.parseInt(
+  process.env.TERMINAL_MAX_SESSIONS ?? "3",
+  10
+);
+const TERMINAL_MAX_SESSIONS = Number.isFinite(TERMINAL_MAX_SESSIONS_RAW)
+  ? TERMINAL_MAX_SESSIONS_RAW
+  : 3;
+const TERMINAL_CWD = process.env.TERMINAL_CWD ?? process.cwd();
+const TERMINAL_SHELL =
+  process.env.TERMINAL_SHELL ??
+  (process.platform === "win32"
+    ? process.env.ComSpec ?? "powershell.exe"
+    : process.env.SHELL ?? "/bin/bash");
+const TERMINAL_ENV_BLOCKLIST = [
+  "AUTH_PASSWORD",
+  "AUTH_SECRET",
+  "AGENT_TOKEN",
+  "AGENT_PRIVATE_VALUE",
+] as const;
 
 const LOG_REDACT_VALUES = LOG_REDACT_KEYS.flatMap((key) => {
   const value = process.env[key];
@@ -161,7 +244,37 @@ type LogResult =
   | { ok: true; content: string }
   | { ok: false; status: number; error: string };
 
+type TerminalOutputChunk = {
+  index: number;
+  data: string;
+};
+
+type TerminalProcess = {
+  write: (input: string) => void;
+  resize: (cols: number, rows: number) => void;
+  kill: () => void;
+  onData: (listener: (data: string) => void) => void;
+  onExit: (listener: (event: { exitCode: number }) => void) => void;
+};
+
+type TerminalSession = {
+  id: string;
+  pty: TerminalProcess;
+  mode: "pty" | "fallback";
+  output: TerminalOutputChunk[];
+  cursor: number;
+  lastKnownCwd: string | null;
+  createdAt: number;
+  updatedAt: number;
+  closedAt: number | null;
+  exitCode: number | null;
+  closeReason: string | null;
+  idleTimer: NodeJS.Timeout | null;
+  cleanupTimer: NodeJS.Timeout | null;
+};
+
 let lastCpuSnapshot: CpuSnapshot | null = null;
+const terminalSessions = new Map<string, TerminalSession>();
 
 function roundTo(value: number, decimals = 1): number {
   const factor = 10 ** decimals;
@@ -389,14 +502,33 @@ async function getIntelGpuInfo(): Promise<GpuInfo | null> {
 
 async function getDisks(): Promise<DiskInfo[]> {
   let stdout = "";
+  const platform = process.platform;
 
-  try {
-    ({ stdout } = await execFileAsync("df", [
-      "-kP",
-      "--output=source,fstype,size,used,avail,pcent,target",
-    ]));
-  } catch {
-    ({ stdout } = await execFileAsync("df", ["-kPT"]));
+  const logDiskDebug = (message: string, error?: unknown) => {
+    if (!DEBUG_DISKS) return;
+    if (error instanceof Error) {
+      console.warn(`[disks] ${message}: ${error.message}`);
+      return;
+    }
+    if (typeof error === "string") {
+      console.warn(`[disks] ${message}: ${error}`);
+      return;
+    }
+    console.warn(`[disks] ${message}`);
+  };
+
+  if (platform === "darwin") {
+    ({ stdout } = await execFileAsync("df", ["-kP"]));
+  } else {
+    try {
+      ({ stdout } = await execFileAsync("df", [
+        "-kP",
+        "--output=source,fstype,size,used,avail,pcent,target",
+      ]));
+    } catch (error) {
+      logDiskDebug("df --output mode failed, retrying with -kPT", error);
+      ({ stdout } = await execFileAsync("df", ["-kPT"]));
+    }
   }
 
   const lines = stdout.trim().split("\n");
@@ -429,7 +561,9 @@ async function getDisks(): Promise<DiskInfo[]> {
       ]);
       const name = nameRaw.trim().split(/\s+/)[0];
       if (name) return name;
-    } catch {}
+    } catch (error) {
+      logDiskDebug(`lsblk KNAME failed for ${source}`, error);
+    }
 
     try {
       const { stdout: nameRaw } = await execFileAsync("lsblk", [
@@ -439,7 +573,9 @@ async function getDisks(): Promise<DiskInfo[]> {
       ]);
       const name = nameRaw.trim().split(/\s+/)[0];
       if (name) return name;
-    } catch {}
+    } catch (error) {
+      logDiskDebug(`lsblk NAME failed for ${source}`, error);
+    }
 
     return path.basename(source);
   };
@@ -453,7 +589,8 @@ async function getDisks(): Promise<DiskInfo[]> {
       ]);
       const parent = parentRaw.trim().split(/\s+/)[0];
       return parent || null;
-    } catch {
+    } catch (error) {
+      logDiskDebug(`lsblk PKNAME failed for ${source}`, error);
       return null;
     }
   };
@@ -608,12 +745,24 @@ async function getDisks(): Promise<DiskInfo[]> {
     if (!line.trim()) continue;
 
     const parts = line.trim().split(/\s+/);
-    if (parts.length < 7) {
+    if (parts.length < 6) {
       continue;
     }
 
+    const includesType =
+      parts.length >= 7 && !/^\d+$/.test(parts[1]) && /^\d+$/.test(parts[2]);
     const [filesystem, type, blocks, used, available, capacity, ...mountParts] =
-      parts;
+      includesType
+        ? parts
+        : [
+            parts[0],
+            "unknown",
+            parts[1],
+            parts[2],
+            parts[3],
+            parts[4],
+            ...parts.slice(5),
+          ];
     const mountRaw = mountParts.join(" ");
     const mount = mountRaw.replace(/\\040/g, " ");
     const usedPercent = Number.parseFloat(capacity.replace("%", ""));
@@ -758,6 +907,381 @@ function redactLogContent(content: string): string {
   return redacted;
 }
 
+function clampTerminalCols(value: number): number {
+  if (!Number.isFinite(value)) return TERMINAL_DEFAULT_COLS;
+  return Math.min(TERMINAL_MAX_COLS, Math.max(TERMINAL_MIN_COLS, value));
+}
+
+function clampTerminalRows(value: number): number {
+  if (!Number.isFinite(value)) return TERMINAL_DEFAULT_ROWS;
+  return Math.min(TERMINAL_MAX_ROWS, Math.max(TERMINAL_MIN_ROWS, value));
+}
+
+function resolveTerminalShellCandidates(): string[] {
+  const candidates = [
+    TERMINAL_SHELL,
+    process.env.SHELL,
+    "/bin/bash",
+    "/bin/zsh",
+    "bash",
+    "zsh",
+    "sh",
+  ];
+  const unique = new Set<string>();
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const trimmed = candidate.trim();
+    if (!trimmed) continue;
+    unique.add(trimmed);
+  }
+  return Array.from(unique);
+}
+
+function spawnTerminalPty(
+  cols: number,
+  rows: number,
+  cwd: string
+): {
+  pty: TerminalProcess;
+  shell: string;
+  mode: "pty" | "fallback";
+  fallbackClientEcho: boolean;
+} {
+  const env = getTerminalEnv();
+  const shells = resolveTerminalShellCandidates();
+  let ptyError: unknown = null;
+
+  for (const shell of shells) {
+    try {
+      const pty = spawnPty(shell, [], {
+        name: "xterm-256color",
+        cols,
+        rows,
+        cwd,
+        env,
+      });
+      return { pty, shell, mode: "pty", fallbackClientEcho: false };
+    } catch (error) {
+      ptyError = error;
+    }
+  }
+
+  let processError: unknown = null;
+  for (const attempt of buildTerminalFallbackAttempts(shells)) {
+    try {
+      let child: ChildProcessWithoutNullStreams | undefined;
+      let fallbackTransport: "script" | "pipe" = "pipe";
+
+      const canUseScriptFallback =
+        process.platform !== "win32" &&
+        Boolean(process.stdin.isTTY) &&
+        Boolean(process.stdout.isTTY);
+
+      if (canUseScriptFallback) {
+        try {
+          child = spawnProcess(
+            "script",
+            ["-q", "/dev/null", attempt.shell, ...attempt.args],
+            {
+              cwd,
+              env,
+              stdio: "pipe",
+            }
+          ) as ChildProcessWithoutNullStreams;
+          fallbackTransport = "script";
+        } catch {
+          child = undefined;
+        }
+      }
+
+      if (!child) {
+        child = spawnProcess(attempt.shell, attempt.args, {
+          cwd,
+          env,
+          stdio: "pipe",
+        }) as ChildProcessWithoutNullStreams;
+      }
+
+      const fallback: TerminalProcess = {
+        write(input: string) {
+          if (!child.stdin.destroyed) {
+            child.stdin.write(input);
+          }
+        },
+        resize() {
+          // No-op for non-PTY fallback mode.
+        },
+        kill() {
+          child.kill();
+        },
+        onData(listener: (data: string) => void) {
+          child.stdout.on("data", (chunk: Buffer | string) => {
+            listener(normalizeFallbackOutputChunk(String(chunk)));
+          });
+          child.stderr.on("data", (chunk: Buffer | string) => {
+            listener(normalizeFallbackOutputChunk(String(chunk)));
+          });
+        },
+        onExit(listener: (event: { exitCode: number }) => void) {
+          child.on("exit", (code: number | null) => {
+            listener({ exitCode: typeof code === "number" ? code : 0 });
+          });
+        },
+      };
+
+      const ptyReason =
+        ptyError instanceof Error && ptyError.message
+          ? ptyError.message
+          : "PTY startup failed";
+      const argSuffix = attempt.args.length > 0 ? ` args=${attempt.args.join(" ")}` : "";
+      logTerminalLifecycle(
+        "fallback",
+        `shell=${attempt.shell}${argSuffix} transport=${fallbackTransport} reason=${ptyReason}`
+      );
+
+      return {
+        pty: fallback,
+        shell: attempt.shell,
+        mode: "fallback",
+        fallbackClientEcho: shouldUseFallbackClientEcho(fallbackTransport),
+      };
+    } catch (error) {
+      processError = error;
+    }
+  }
+
+  const lastError = processError ?? ptyError;
+  const reason =
+    lastError instanceof Error && lastError.message
+      ? lastError.message
+      : "failed to spawn terminal shell";
+  throw new Error(`unable to start terminal shell: ${reason}`);
+}
+
+function getTerminalEnv(): NodeJS.ProcessEnv {
+  const blocked = new Set<string>(TERMINAL_ENV_BLOCKLIST);
+  const env: Record<string, string | undefined> = {
+    ...process.env,
+    NODE_ENV: process.env.NODE_ENV ?? "development",
+    TERM: process.env.TERM ?? "xterm-256color",
+    COLORTERM: process.env.COLORTERM ?? "truecolor",
+    CLICOLOR: process.env.CLICOLOR ?? "1",
+    CLICOLOR_FORCE: process.env.CLICOLOR_FORCE ?? "1",
+    // BSD/macOS ls color map: 'D' keeps directory entries in warm amber/orange tone.
+    LSCOLORS: process.env.LSCOLORS ?? "Dxfxcxdxbxegedabagacad",
+    // GNU ls color map: render directories in orange (xterm 256-color 214).
+    LS_COLORS: process.env.LS_COLORS ?? "di=38;5;214",
+  };
+  for (const key of blocked) {
+    delete env[key];
+  }
+  return env as NodeJS.ProcessEnv;
+}
+
+function safeClearTimer(timer: NodeJS.Timeout | null) {
+  if (timer) {
+    clearTimeout(timer);
+  }
+}
+
+function logTerminalLifecycle(event: string, message: string) {
+  const timestamp = new Date().toISOString();
+  console.log(`[${timestamp}] [terminal] ${event} ${message}`);
+}
+
+function scheduleSessionRemoval(sessionId: string, delayMs: number) {
+  const session = terminalSessions.get(sessionId);
+  if (!session) return;
+  safeClearTimer(session.cleanupTimer);
+  session.cleanupTimer = setTimeout(() => {
+    terminalSessions.delete(sessionId);
+  }, delayMs);
+}
+
+function closeTerminalSession(sessionId: string, reason: string) {
+  const session = terminalSessions.get(sessionId);
+  if (!session) return;
+  if (session.closedAt === null) {
+    session.closedAt = Date.now();
+    session.closeReason = reason;
+    const activeCount = countActiveSessions(terminalSessions.values());
+    logTerminalLifecycle(
+      "close",
+      `sessionId=${session.id} reason=${reason} active=${activeCount}/${TERMINAL_MAX_SESSIONS}`
+    );
+  }
+  safeClearTimer(session.idleTimer);
+  session.idleTimer = null;
+  try {
+    session.pty.kill();
+  } catch {}
+  scheduleSessionRemoval(sessionId, TERMINAL_CLOSED_TTL_MS);
+}
+
+function scheduleTerminalIdleTimeout(sessionId: string) {
+  const session = terminalSessions.get(sessionId);
+  if (!session) return;
+  safeClearTimer(session.idleTimer);
+  session.idleTimer = setTimeout(() => {
+    const liveSession = terminalSessions.get(sessionId);
+    if (!liveSession || liveSession.closedAt !== null) return;
+    logTerminalLifecycle(
+      "timeout",
+      `sessionId=${sessionId} idleMs=${TERMINAL_SESSION_IDLE_TIMEOUT_MS}`
+    );
+    closeTerminalSession(sessionId, "idle-timeout");
+  }, TERMINAL_SESSION_IDLE_TIMEOUT_MS);
+}
+
+function updateTerminalActivity(session: TerminalSession) {
+  if (session.closedAt !== null) return;
+  session.updatedAt = Date.now();
+  scheduleTerminalIdleTimeout(session.id);
+}
+
+function appendTerminalOutput(session: TerminalSession, data: string) {
+  if (!data) return;
+  if (session.mode === "fallback") {
+    const inferredCwd = inferFallbackCwdFromChunk(data);
+    if (inferredCwd) {
+      session.lastKnownCwd = inferredCwd;
+    }
+  }
+  session.cursor += 1;
+  session.output.push({ index: session.cursor, data });
+  if (session.output.length > TERMINAL_MAX_CHUNKS) {
+    session.output.splice(0, session.output.length - TERMINAL_MAX_CHUNKS);
+  }
+  updateTerminalActivity(session);
+}
+
+function getTerminalPromptContext(): { user?: string; host?: string } {
+  let user: string | undefined;
+  try {
+    user = os.userInfo().username;
+  } catch {
+    user = process.env.USER ?? process.env.USERNAME;
+  }
+
+  const host = os.hostname();
+  return {
+    user: user?.trim() || undefined,
+    host: host.trim() || undefined,
+  };
+}
+
+async function readJsonBody<T>(
+  req: http.IncomingMessage,
+  maxBytes = 1_000_000
+): Promise<
+  | { ok: true; value: T }
+  | { ok: false; status: number; error: string }
+> {
+  const buffers: Buffer[] = [];
+  let totalBytes = 0;
+
+  for await (const chunk of req) {
+    const piece = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+    totalBytes += piece.length;
+    if (totalBytes > maxBytes) {
+      return { ok: false, status: 413, error: "Request body too large" };
+    }
+    buffers.push(piece);
+  }
+
+  const raw = Buffer.concat(buffers).toString("utf8").trim();
+  if (!raw) {
+    return { ok: false, status: 400, error: "Missing JSON body" };
+  }
+
+  try {
+    return { ok: true, value: JSON.parse(raw) as T };
+  } catch {
+    return { ok: false, status: 400, error: "Invalid JSON body" };
+  }
+}
+
+function createTerminalSession(colsRaw?: number, rowsRaw?: number) {
+  if (hasReachedSessionLimit(terminalSessions.values(), TERMINAL_MAX_SESSIONS)) {
+    throw new Error("terminal session limit reached");
+  }
+
+  const cols = clampTerminalCols(colsRaw ?? TERMINAL_DEFAULT_COLS);
+  const rows = clampTerminalRows(rowsRaw ?? TERMINAL_DEFAULT_ROWS);
+  const cwd = path.resolve(TERMINAL_CWD);
+  const promptContext = getTerminalPromptContext();
+  const { pty, shell, mode, fallbackClientEcho } = spawnTerminalPty(
+    cols,
+    rows,
+    cwd
+  );
+
+  const sessionId = randomUUID();
+  const now = Date.now();
+  const session: TerminalSession = {
+    id: sessionId,
+    pty,
+    mode,
+    output: [],
+    cursor: 0,
+    lastKnownCwd: null,
+    createdAt: now,
+    updatedAt: now,
+    closedAt: null,
+    exitCode: null,
+    closeReason: null,
+    idleTimer: null,
+    cleanupTimer: null,
+  };
+
+  pty.onData((data) => {
+    appendTerminalOutput(session, data);
+  });
+
+  pty.onExit(({ exitCode }) => {
+    const wasOpen = session.closedAt === null;
+    session.exitCode = exitCode;
+    session.closedAt = Date.now();
+    session.closeReason = session.closeReason ?? "process-exit";
+    if (wasOpen) {
+      const activeCount = countActiveSessions(terminalSessions.values());
+      logTerminalLifecycle(
+        "close",
+        `sessionId=${session.id} reason=${session.closeReason} active=${activeCount}/${TERMINAL_MAX_SESSIONS}`
+      );
+    }
+    safeClearTimer(session.idleTimer);
+    session.idleTimer = null;
+    scheduleSessionRemoval(session.id, TERMINAL_CLOSED_TTL_MS);
+  });
+
+  terminalSessions.set(sessionId, session);
+  scheduleTerminalIdleTimeout(sessionId);
+  const activeCount = countActiveSessions(terminalSessions.values());
+  logTerminalLifecycle(
+    "create",
+    `sessionId=${sessionId} shell=${shell} mode=${mode} active=${activeCount}/${TERMINAL_MAX_SESSIONS}`
+  );
+
+  return {
+    id: sessionId,
+    cols,
+    rows,
+    cwd,
+    shell,
+    mode,
+    fallbackClientEcho,
+    createdAt: new Date(now).toISOString(),
+    user: promptContext.user,
+    host: promptContext.host,
+  };
+}
+
+function getTerminalSession(sessionId: string | null): TerminalSession | null {
+  if (!sessionId) return null;
+  return terminalSessions.get(sessionId) ?? null;
+}
+
 function sanitizeRelativePath(raw: string | null): string | null {
   const value = raw?.trim() ?? "";
   if (!value) return "";
@@ -874,7 +1398,8 @@ function isPrivatePath(pathname: string): boolean {
     pathname.startsWith("/docker") ||
     pathname.startsWith("/systemd") ||
     pathname.startsWith("/files") ||
-    pathname.startsWith("/logs")
+    pathname.startsWith("/logs") ||
+    pathname.startsWith("/terminal")
   );
 }
 
@@ -1253,9 +1778,15 @@ const server = http.createServer(async (req, res) => {
   const startTime = Date.now();
   const method = req.method;
   const url = new URL(req.url ?? "/", "http://localhost");
+  const isTerminalPost =
+    method === "POST" &&
+    (url.pathname === "/terminal/session" ||
+      url.pathname === "/terminal/input" ||
+      url.pathname === "/terminal/resize" ||
+      url.pathname === "/terminal/close");
 
   try {
-    if (method !== "GET") {
+    if (method !== "GET" && !isTerminalPost) {
       sendError(res, 405, "Method not allowed");
       logRequest(method, url.pathname, 405, startTime);
       return;
@@ -1264,6 +1795,191 @@ const server = http.createServer(async (req, res) => {
     if (isPrivatePath(url.pathname) && !hasPrivateAccess(req)) {
       sendError(res, 401, "Unauthorized");
       logRequest(method, url.pathname, 401, startTime);
+      return;
+    }
+
+    if (url.pathname === "/terminal/session" && method === "POST") {
+      const bodyResult = await readJsonBody<{ cols?: number; rows?: number }>(req);
+      if (!bodyResult.ok) {
+        sendError(res, bodyResult.status, bodyResult.error);
+        logRequest(method, url.pathname, bodyResult.status, startTime);
+        return;
+      }
+
+      let created: ReturnType<typeof createTerminalSession>;
+      try {
+        created = createTerminalSession(bodyResult.value.cols, bodyResult.value.rows);
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.message === "terminal session limit reached"
+        ) {
+          const activeCount = countActiveSessions(terminalSessions.values());
+          logTerminalLifecycle(
+            "limit",
+            `active=${activeCount}/${TERMINAL_MAX_SESSIONS} total=${terminalSessions.size}`
+          );
+          sendError(res, 429, "Too many active terminal sessions");
+          logRequest(method, url.pathname, 429, startTime);
+          return;
+        }
+        throw error;
+      }
+
+      sendJson(res, 200, {
+        timestamp: new Date().toISOString(),
+        sessionId: created.id,
+        cols: created.cols,
+        rows: created.rows,
+        cwd: created.cwd,
+        shell: created.shell,
+        mode: created.mode,
+        fallbackClientEcho: created.fallbackClientEcho,
+        createdAt: created.createdAt,
+        user: created.user,
+        host: created.host,
+      });
+      logRequest(method, url.pathname, 200, startTime);
+      return;
+    }
+
+    if (url.pathname === "/terminal/input" && method === "POST") {
+      const bodyResult = await readJsonBody<{ sessionId?: string; input?: string }>(req);
+      if (!bodyResult.ok) {
+        sendError(res, bodyResult.status, bodyResult.error);
+        logRequest(method, url.pathname, bodyResult.status, startTime);
+        return;
+      }
+
+      const session = getTerminalSession(bodyResult.value.sessionId ?? null);
+      if (!session) {
+        sendError(res, 404, "Unknown terminal session");
+        logRequest(method, url.pathname, 404, startTime);
+        return;
+      }
+      if (session.closedAt !== null) {
+        sendError(res, 409, "Terminal session is closed");
+        logRequest(method, url.pathname, 409, startTime);
+        return;
+      }
+
+      const input = String(bodyResult.value.input ?? "");
+      if (!input.length) {
+        sendError(res, 400, "Missing input");
+        logRequest(method, url.pathname, 400, startTime);
+        return;
+      }
+
+      const inputBytes = Buffer.byteLength(input, "utf8");
+      if (inputBytes > TERMINAL_MAX_INPUT_BYTES) {
+        sendError(res, 413, "Terminal input too large");
+        logRequest(method, url.pathname, 413, startTime);
+        return;
+      }
+
+      session.pty.write(input);
+      updateTerminalActivity(session);
+
+      sendJson(res, 200, {
+        timestamp: new Date().toISOString(),
+        sessionId: session.id,
+        acceptedBytes: inputBytes,
+      });
+      logRequest(method, url.pathname, 200, startTime);
+      return;
+    }
+
+    if (url.pathname === "/terminal/resize" && method === "POST") {
+      const bodyResult = await readJsonBody<{ sessionId?: string; cols?: number; rows?: number }>(req);
+      if (!bodyResult.ok) {
+        sendError(res, bodyResult.status, bodyResult.error);
+        logRequest(method, url.pathname, bodyResult.status, startTime);
+        return;
+      }
+
+      const session = getTerminalSession(bodyResult.value.sessionId ?? null);
+      if (!session) {
+        sendError(res, 404, "Unknown terminal session");
+        logRequest(method, url.pathname, 404, startTime);
+        return;
+      }
+      if (session.closedAt !== null) {
+        sendError(res, 409, "Terminal session is closed");
+        logRequest(method, url.pathname, 409, startTime);
+        return;
+      }
+
+      const cols = clampTerminalCols(bodyResult.value.cols ?? TERMINAL_DEFAULT_COLS);
+      const rows = clampTerminalRows(bodyResult.value.rows ?? TERMINAL_DEFAULT_ROWS);
+      session.pty.resize(cols, rows);
+      updateTerminalActivity(session);
+
+      sendJson(res, 200, {
+        timestamp: new Date().toISOString(),
+        sessionId: session.id,
+        cols,
+        rows,
+      });
+      logRequest(method, url.pathname, 200, startTime);
+      return;
+    }
+
+    if (url.pathname === "/terminal/output" && method === "GET") {
+      const sessionId = url.searchParams.get("sessionId");
+      const session = getTerminalSession(sessionId);
+      if (!session) {
+        sendError(res, 404, "Unknown terminal session");
+        logRequest(method, url.pathname, 404, startTime);
+        return;
+      }
+
+      const cursorRaw = url.searchParams.get("cursor");
+      const parsedCursor = cursorRaw ? Number.parseInt(cursorRaw, 10) : NaN;
+      const cursor = Number.isFinite(parsedCursor)
+        ? Math.max(0, parsedCursor)
+        : 0;
+      const chunks = session.output.filter((chunk) => chunk.index > cursor);
+      updateTerminalActivity(session);
+
+      sendJson(res, 200, {
+        timestamp: new Date().toISOString(),
+        sessionId: session.id,
+        cursor: session.cursor,
+        chunks,
+        cwd:
+          session.mode === "fallback" && session.lastKnownCwd
+            ? session.lastKnownCwd
+            : undefined,
+        closed: session.closedAt !== null,
+        exitCode: session.exitCode,
+        closeReason: session.closeReason,
+      });
+      logRequest(method, url.pathname, 200, startTime);
+      return;
+    }
+
+    if (url.pathname === "/terminal/close" && method === "POST") {
+      const bodyResult = await readJsonBody<{ sessionId?: string }>(req);
+      if (!bodyResult.ok) {
+        sendError(res, bodyResult.status, bodyResult.error);
+        logRequest(method, url.pathname, bodyResult.status, startTime);
+        return;
+      }
+
+      const session = getTerminalSession(bodyResult.value.sessionId ?? null);
+      if (!session) {
+        sendError(res, 404, "Unknown terminal session");
+        logRequest(method, url.pathname, 404, startTime);
+        return;
+      }
+
+      closeTerminalSession(session.id, "closed-by-client");
+      sendJson(res, 200, {
+        timestamp: new Date().toISOString(),
+        sessionId: session.id,
+        closed: true,
+      });
+      logRequest(method, url.pathname, 200, startTime);
       return;
     }
 

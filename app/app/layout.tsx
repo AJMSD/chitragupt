@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import Link from "next/link";
 import {
+  IconClock,
   IconFolder,
   IconGrid,
   IconServer,
@@ -26,13 +27,13 @@ export default async function AppLayout({
   }
 
   return (
-    <div className="min-h-screen bg-[#080503] text-slate-100">
+    <div className="flex flex-col min-h-screen bg-[#080503] text-slate-100">
       <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
         <div className="absolute -top-32 left-1/3 h-72 w-72 rounded-full bg-orange-500/25 blur-[140px]" />
         <div className="absolute bottom-0 right-0 h-96 w-96 rounded-full bg-amber-300/20 blur-[140px]" />
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(251,146,60,0.18),_transparent_55%),radial-gradient(circle_at_bottom,_rgba(249,115,22,0.18),_transparent_60%)]" />
       </div>
-      <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-6 py-8">
+      <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-8 px-6 py-8">
         <PrivateHeader />
 
         <nav className="flex flex-wrap gap-3">
@@ -65,16 +66,25 @@ export default async function AppLayout({
           </Link>
           <Link
             className="flex h-12 w-12 items-center justify-center rounded-2xl border border-orange-500/20 bg-[#120c08]/70 text-amber-100 transition hover:border-orange-400/60 hover:bg-orange-400/10"
+            href="/app/terminal"
+            aria-label="Terminal"
+            title="Terminal"
+          >
+            <IconTerminal className="h-5 w-5" />
+            <span className="sr-only">Terminal</span>
+          </Link>
+          <Link
+            className="flex h-12 w-12 items-center justify-center rounded-2xl border border-orange-500/20 bg-[#120c08]/70 text-amber-100 transition hover:border-orange-400/60 hover:bg-orange-400/10"
             href="/app/logs"
             aria-label="Logs"
             title="Logs"
           >
-            <IconTerminal className="h-5 w-5" />
+            <IconClock className="h-5 w-5" />
             <span className="sr-only">Logs</span>
           </Link>
         </nav>
 
-        <main>{children}</main>
+        <main className="flex flex-1 min-h-0">{children}</main>
       </div>
     </div>
   );

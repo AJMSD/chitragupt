@@ -7,7 +7,13 @@ const AGENT_PRIVATE_HEADER = (
   process.env.AGENT_PRIVATE_HEADER ?? "x-chitragupt-private"
 ).toLowerCase();
 const AGENT_PRIVATE_VALUE = process.env.AGENT_PRIVATE_VALUE ?? "1";
-const PRIVATE_PATH_PREFIXES = ["/docker", "/systemd", "/files", "/logs"] as const;
+const PRIVATE_PATH_PREFIXES = [
+  "/docker",
+  "/systemd",
+  "/files",
+  "/logs",
+  "/terminal",
+] as const;
 
 export function getAgentBaseUrl(): string {
   const raw = process.env.AGENT_URL ?? DEFAULT_AGENT_URL;
@@ -30,6 +36,8 @@ type AgentFetchOptions = {
   private?: boolean;
   headers?: Record<string, string>;
   timeoutMs?: number;
+  method?: "GET" | "POST";
+  body?: unknown;
 };
 
 export function getPrivateAgentHeaders(): Record<string, string> {
@@ -71,14 +79,21 @@ export async function agentFetchJson<T>(
     ...(options.private ? getPrivateAgentHeaders() : {}),
     ...(options.headers ?? {}),
   };
+  const method = options.method ?? "GET";
+  const hasBody = options.body !== undefined;
+  if (hasBody) {
+    headers["Content-Type"] = "application/json";
+  }
   const timeoutMs = options.timeoutMs ?? 4000;
 
   const fetchOnce = async (): Promise<AgentFetchSuccess<T> | AgentFetchFailure> => {
     try {
       const response = await fetch(url, {
+        method,
         cache: "no-store",
         signal: AbortSignal.timeout(timeoutMs),
         headers,
+        body: hasBody ? JSON.stringify(options.body) : undefined,
       });
 
       const contentType = response.headers.get("content-type") ?? "";

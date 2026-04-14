@@ -10,6 +10,11 @@ A self-hosted operations dashboard for Aman's Ubuntu server.
 - Public API proxy routes in Next.js (`/api/public/metrics`, `/api/public/disks`)
 - Public dashboard with CPU, memory, disks, uptime, hostname, and total storage
 
+## Current MVP (Private)
+- Session-gated dashboard at `/app/*`
+- Private terminal at `/app/terminal` with command execution, Recent history, and Favorites quick reuse
+- Terminal implementation details and limits are documented in `TERMINAL.md`
+
 ## Local Development
 1. Install dependencies: `npm install`
 2. Copy env template if needed: `copy .env.example .env`
@@ -41,6 +46,9 @@ A self-hosted operations dashboard for Aman's Ubuntu server.
 - **Docker/systemd endpoints fail**
   - Confirm the agent user has permission to access Docker or systemd.
   - Check your process manager logs for service errors.
+- **Terminal shows reconnect state, 429, or no output**
+  - See `TERMINAL.md` troubleshooting for session-limit and output diagnostics.
+  - Check agent logs for `[terminal]` lifecycle events (`create`, `close`, `timeout`, `limit`, `fallback`).
 
 ## Safe Update & Rollback Checklist
 1. Pull latest code and review diffs: `git pull --ff-only`

@@ -11,6 +11,7 @@ import { createReadStream, promises as fs } from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
 import { spawn as spawnPty } from "node-pty";
+import yazl from "yazl";
 import {
   countActiveSessions,
   hasReachedSessionLimit,
@@ -226,6 +227,12 @@ type FileEntry = {
   type: "file" | "dir" | "other";
   sizeBytes: number | null;
   modifiedMs: number | null;
+};
+
+type ZipArchiveEntry = {
+  sourcePath: string;
+  archivePath: string;
+  type: "file" | "dir";
 };
 
 type AllowlistRootResponse = {
@@ -791,6 +798,9 @@ async function getDisks(): Promise<DiskInfo[]> {
 }
 
 const WINDOWS_DRIVE_REGEX = /^[A-Za-z]:[\\/]/;
+const ZIP_MISSING_REGEX =
+  /(enoent|not found|command not found|executable file not found|spawn zip)/i;
+let zipCommandAvailability: boolean | null = null;
 
 function isWindowsPath(value: string): boolean {
   return WINDOWS_DRIVE_REGEX.test(value);
@@ -1567,6 +1577,324 @@ async function listDirectoryEntries(
   });
 }
 
+function toArchivePath(value: string): string {
+  return value
+    .replace(/\\+/g, "/")
+    .replace(/^\/+/g, "")
+    .replace(/\/+/g, "/");
+}
+
+function joinArchivePath(base: string, child: string): string {
+  if (!base) return toArchivePath(child);
+  return toArchivePath(`${base}/${child}`);
+}
+
+function toZipSafeBaseName(value: string): string {
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[-.]+|[-.]+$/g, "");
+
+  return normalized || "archive";
+}
+
+function formatZipTimestamp(date = new Date()): string {
+  const parts = [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+    String(date.getHours()).padStart(2, "0"),
+    String(date.getMinutes()).padStart(2, "0"),
+    String(date.getSeconds()).padStart(2, "0"),
+  ];
+  return `${parts[0]}${parts[1]}${parts[2]}-${parts[3]}${parts[4]}${parts[5]}`;
+}
+
+function buildZipFileName(baseName: string): string {
+  return `${toZipSafeBaseName(baseName)}-${formatZipTimestamp()}.zip`;
+}
+
+function getRelativeDirectoryKey(relativePath: string): string {
+  const parts = relativePath.split(/[\\/]+/).filter(Boolean);
+  if (parts.length <= 1) return "";
+  return parts.slice(0, -1).join("/");
+}
+
+function getErrorMessage(error: unknown): string {
+  if (typeof error === "string") {
+    return error;
+  }
+  if (
+    typeof error === "object" &&
+    error &&
+    "message" in error &&
+    typeof (error as { message?: unknown }).message === "string"
+  ) {
+    return (error as { message: string }).message;
+  }
+  return "";
+}
+
+function isZipCommandUnavailable(error: unknown): boolean {
+  if (
+    typeof error === "object" &&
+    error &&
+    "code" in error &&
+    (error as { code?: string }).code === "ENOENT"
+  ) {
+    return true;
+  }
+  return ZIP_MISSING_REGEX.test(getErrorMessage(error));
+}
+
+async function checkZipCommandAvailability(): Promise<boolean> {
+  if (zipCommandAvailability !== null) {
+    return zipCommandAvailability;
+  }
+
+  try {
+    await execFileAsync("zip", ["-h"], { timeout: 2000 });
+    zipCommandAvailability = true;
+  } catch (error) {
+    zipCommandAvailability = !isZipCommandUnavailable(error);
+  }
+
+  return zipCommandAvailability;
+}
+
+async function collectFolderZipEntries(
+  folderPath: string,
+  pathModule: typeof path.posix | typeof path.win32
+): Promise<{ cwd: string; entries: ZipArchiveEntry[] }> {
+  const folderBaseName =
+    toArchivePath(pathModule.basename(folderPath) || "") || "root";
+  const entries: ZipArchiveEntry[] = [
+    {
+      sourcePath: folderPath,
+      archivePath: `${folderBaseName}/`,
+      type: "dir",
+    },
+  ];
+
+  const walk = async (absoluteDir: string, archiveDir: string): Promise<void> => {
+    const children = await fs.readdir(absoluteDir, { withFileTypes: true });
+    children.sort((a, b) => a.name.localeCompare(b.name));
+
+    for (const child of children) {
+      const absoluteChildPath = pathModule.join(absoluteDir, child.name);
+      let stats: Awaited<ReturnType<typeof fs.lstat>>;
+
+      try {
+        stats = await fs.lstat(absoluteChildPath);
+      } catch {
+        continue;
+      }
+
+      if (stats.isSymbolicLink()) {
+        continue;
+      }
+
+      const archiveChildPath = joinArchivePath(archiveDir, child.name);
+
+      if (stats.isDirectory()) {
+        entries.push({
+          sourcePath: absoluteChildPath,
+          archivePath: `${archiveChildPath}/`,
+          type: "dir",
+        });
+        await walk(absoluteChildPath, archiveChildPath);
+        continue;
+      }
+
+      if (stats.isFile()) {
+        entries.push({
+          sourcePath: absoluteChildPath,
+          archivePath: archiveChildPath,
+          type: "file",
+        });
+      }
+    }
+  };
+
+  await walk(folderPath, folderBaseName);
+
+  return {
+    cwd: pathModule.dirname(folderPath),
+    entries,
+  };
+}
+
+type ZipStreamStartResult =
+  | { ok: true }
+  | { ok: false; status: number; error: string; zipUnavailable: boolean };
+
+function zipResponseHeaders(zipFileName: string): Record<string, string> {
+  return {
+    "Content-Type": "application/zip",
+    "Content-Disposition": `attachment; filename="${zipFileName}"`,
+    "Cache-Control": "no-store",
+  };
+}
+
+async function beginSystemZipStream(
+  res: http.ServerResponse,
+  zipFileName: string,
+  inputPaths: string[],
+  options: {
+    cwd?: string;
+    flatten: boolean;
+  }
+): Promise<ZipStreamStartResult> {
+  if (inputPaths.length === 0) {
+    return { ok: false, status: 400, error: "No files available for zip", zipUnavailable: false };
+  }
+
+  const args = ["-q"];
+  if (options.flatten) {
+    args.push("-j");
+  }
+  args.push("-", "-@");
+
+  const zip = spawnProcess("zip", args, {
+    cwd: options.cwd,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+
+  const spawned = await new Promise<{ ok: true } | { ok: false; error: unknown }>(
+    (resolve) => {
+      zip.once("spawn", () => resolve({ ok: true }));
+      zip.once("error", (error) => resolve({ ok: false, error }));
+    }
+  );
+
+  if (!spawned.ok) {
+    const unavailable = isZipCommandUnavailable(spawned.error);
+    if (unavailable) {
+      zipCommandAvailability = false;
+    }
+    return {
+      ok: false,
+      status: unavailable ? 503 : 500,
+      error: unavailable ? "zip command unavailable" : "zip command failed",
+      zipUnavailable: unavailable,
+    };
+  }
+
+  res.writeHead(200, zipResponseHeaders(zipFileName));
+  zip.stdout.pipe(res);
+
+  let stderr = "";
+  zip.stderr.on("data", (chunk) => {
+    stderr += chunk.toString();
+  });
+
+  zip.on("close", (code) => {
+    if (code === 0) return;
+    const detail = stderr.trim();
+    if (detail) {
+      console.warn(`[zip] command exited with code ${code}: ${detail}`);
+    } else {
+      console.warn(`[zip] command exited with code ${code}`);
+    }
+    if (!res.writableEnded) {
+      res.destroy();
+    }
+  });
+
+  zip.on("error", (error) => {
+    console.warn("[zip] command stream error", error);
+    if (!res.writableEnded) {
+      res.destroy();
+    }
+  });
+
+  zip.stdin.on("error", () => {
+    // Ignore stdin errors caused by early process termination.
+  });
+  zip.stdin.end(`${inputPaths.join("\n")}\n`, "utf8");
+
+  return { ok: true };
+}
+
+function beginFallbackZipStream(
+  res: http.ServerResponse,
+  zipFileName: string,
+  entries: ZipArchiveEntry[]
+): ZipStreamStartResult {
+  if (entries.length === 0) {
+    return { ok: false, status: 400, error: "No files available for zip", zipUnavailable: false };
+  }
+
+  const zipFile = new yazl.ZipFile();
+  const addedDirs = new Set<string>();
+
+  try {
+    for (const entry of entries) {
+      if (entry.type === "dir") {
+        const dirName = entry.archivePath.replace(/\/+$/, "");
+        if (!dirName || addedDirs.has(dirName)) {
+          continue;
+        }
+        zipFile.addEmptyDirectory(dirName);
+        addedDirs.add(dirName);
+        continue;
+      }
+
+      zipFile.addFile(entry.sourcePath, entry.archivePath);
+    }
+  } catch (error) {
+    console.warn("[zip] fallback setup error", error);
+    return { ok: false, status: 500, error: "zip fallback failed", zipUnavailable: false };
+  }
+
+  res.writeHead(200, zipResponseHeaders(zipFileName));
+  zipFile.outputStream.on("error", (error: Error) => {
+    console.warn("[zip] fallback stream error", error);
+    if (!res.writableEnded) {
+      res.destroy();
+    }
+  });
+  zipFile.outputStream.pipe(res);
+  zipFile.end();
+
+  return { ok: true };
+}
+
+async function beginZipArchiveStream(
+  res: http.ServerResponse,
+  plan: {
+    zipFileName: string;
+    fallbackEntries: ZipArchiveEntry[];
+    systemInputPaths: string[];
+    systemCwd?: string;
+    flattenWithSystemZip: boolean;
+  }
+): Promise<ZipStreamStartResult> {
+  if (await checkZipCommandAvailability()) {
+    const systemStart = await beginSystemZipStream(
+      res,
+      plan.zipFileName,
+      plan.systemInputPaths,
+      {
+        cwd: plan.systemCwd,
+        flatten: plan.flattenWithSystemZip,
+      }
+    );
+
+    if (systemStart.ok) {
+      return systemStart;
+    }
+
+    if (!systemStart.zipUnavailable) {
+      return systemStart;
+    }
+  }
+
+  return beginFallbackZipStream(res, plan.zipFileName, plan.fallbackEntries);
+}
+
 async function tailFile(
   filePath: string,
   lines: number
@@ -1791,9 +2119,11 @@ const server = http.createServer(async (req, res) => {
       url.pathname === "/terminal/input" ||
       url.pathname === "/terminal/resize" ||
       url.pathname === "/terminal/close");
+  const isFilesZipPost =
+    method === "POST" && url.pathname === "/files/zip";
 
   try {
-    if (method !== "GET" && !isTerminalPost) {
+    if (method !== "GET" && !isTerminalPost && !isFilesZipPost) {
       sendError(res, 405, "Method not allowed");
       logRequest(method, url.pathname, 405, startTime);
       return;
@@ -2086,12 +2416,18 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      let stat: Awaited<ReturnType<typeof fs.stat>>;
+      let stat: Awaited<ReturnType<typeof fs.lstat>>;
       try {
-        stat = await fs.stat(resolved.resolvedPath);
+        stat = await fs.lstat(resolved.resolvedPath);
       } catch {
         sendError(res, 404, "Path not found");
         logRequest(method, url.pathname, 404, startTime);
+        return;
+      }
+
+      if (stat.isSymbolicLink()) {
+        sendError(res, 400, "Symbolic links are not supported for zip downloads");
+        logRequest(method, url.pathname, 400, startTime);
         return;
       }
 
@@ -2196,6 +2532,219 @@ const server = http.createServer(async (req, res) => {
         }
       });
       stream.pipe(res);
+      logRequest(method, url.pathname, 200, startTime);
+      return;
+    }
+
+    if (url.pathname === "/files/zip" && method === "GET") {
+      const rootId = url.searchParams.get("root");
+      const relativePath = url.searchParams.get("path");
+      const resolved = await resolveAllowlistPath(rootId, relativePath);
+
+      if (!resolved.ok) {
+        sendError(res, resolved.status, resolved.error);
+        logRequest(method, url.pathname, resolved.status, startTime);
+        return;
+      }
+
+      let stat: Awaited<ReturnType<typeof fs.stat>>;
+      try {
+        stat = await fs.stat(resolved.resolvedPath);
+      } catch {
+        sendError(res, 404, "Path not found");
+        logRequest(method, url.pathname, 404, startTime);
+        return;
+      }
+
+      if (!stat.isDirectory()) {
+        sendError(res, 400, "Path is not a directory");
+        logRequest(method, url.pathname, 400, startTime);
+        return;
+      }
+
+      const isAllowed = await verifyRealPath(
+        resolved.rootPath,
+        resolved.resolvedPath,
+        resolved.pathModule
+      );
+      if (!isAllowed) {
+        sendError(res, 403, "Path outside allowlist");
+        logRequest(method, url.pathname, 403, startTime);
+        return;
+      }
+
+      const folderEntries = await collectFolderZipEntries(
+        resolved.resolvedPath,
+        resolved.pathModule
+      );
+      const zipBaseName =
+        relativePath && relativePath.trim().length > 0
+          ? resolved.pathModule.basename(resolved.resolvedPath)
+          : resolved.root.label;
+      const startZip = await beginZipArchiveStream(res, {
+        zipFileName: buildZipFileName(zipBaseName),
+        fallbackEntries: folderEntries.entries,
+        systemInputPaths: folderEntries.entries.map((entry) => entry.archivePath),
+        systemCwd: folderEntries.cwd,
+        flattenWithSystemZip: false,
+      });
+
+      if (!startZip.ok) {
+        sendError(res, startZip.status, startZip.error);
+        logRequest(method, url.pathname, startZip.status, startTime);
+        return;
+      }
+
+      logRequest(method, url.pathname, 200, startTime);
+      return;
+    }
+
+    if (url.pathname === "/files/zip" && method === "POST") {
+      const bodyResult = await readJsonBody<{
+        root?: unknown;
+        paths?: unknown;
+      }>(req);
+      if (!bodyResult.ok) {
+        sendError(res, bodyResult.status, bodyResult.error);
+        logRequest(method, url.pathname, bodyResult.status, startTime);
+        return;
+      }
+
+      const rootId =
+        typeof bodyResult.value.root === "string"
+          ? bodyResult.value.root.trim()
+          : "";
+      if (!rootId) {
+        sendError(res, 400, "Missing root");
+        logRequest(method, url.pathname, 400, startTime);
+        return;
+      }
+
+      if (!Array.isArray(bodyResult.value.paths) || bodyResult.value.paths.length === 0) {
+        sendError(res, 400, "paths must be a non-empty array");
+        logRequest(method, url.pathname, 400, startTime);
+        return;
+      }
+
+      const selectedPaths: string[] = [];
+      const dedupePaths = new Set<string>();
+      for (const rawPath of bodyResult.value.paths) {
+        if (typeof rawPath !== "string") {
+          sendError(res, 400, "paths must contain only strings");
+          logRequest(method, url.pathname, 400, startTime);
+          return;
+        }
+
+        const sanitizedPath = sanitizeRelativePath(rawPath);
+        if (!sanitizedPath) {
+          sendError(res, 400, "Invalid path");
+          logRequest(method, url.pathname, 400, startTime);
+          return;
+        }
+
+        if (!dedupePaths.has(sanitizedPath)) {
+          dedupePaths.add(sanitizedPath);
+          selectedPaths.push(sanitizedPath);
+        }
+      }
+
+      if (selectedPaths.length === 0) {
+        sendError(res, 400, "No files selected");
+        logRequest(method, url.pathname, 400, startTime);
+        return;
+      }
+
+      const targetDirectory = getRelativeDirectoryKey(selectedPaths[0]);
+      if (
+        selectedPaths.some(
+          (relativePath) =>
+            getRelativeDirectoryKey(relativePath) !== targetDirectory
+        )
+      ) {
+        sendError(res, 400, "Selected files must be from the same folder");
+        logRequest(method, url.pathname, 400, startTime);
+        return;
+      }
+
+      const fallbackEntries: ZipArchiveEntry[] = [];
+      const systemPaths: string[] = [];
+      const archiveNames = new Set<string>();
+
+      for (const relativePath of selectedPaths) {
+        const resolved = await resolveAllowlistPath(rootId, relativePath);
+        if (!resolved.ok) {
+          sendError(res, resolved.status, resolved.error);
+          logRequest(method, url.pathname, resolved.status, startTime);
+          return;
+        }
+
+        let stat: Awaited<ReturnType<typeof fs.lstat>>;
+        try {
+          stat = await fs.lstat(resolved.resolvedPath);
+        } catch {
+          sendError(res, 404, "Path not found");
+          logRequest(method, url.pathname, 404, startTime);
+          return;
+        }
+
+        if (stat.isSymbolicLink()) {
+          sendError(res, 400, "Symbolic links are not supported for zip downloads");
+          logRequest(method, url.pathname, 400, startTime);
+          return;
+        }
+
+        if (!stat.isFile()) {
+          sendError(res, 400, "Selected paths must be files");
+          logRequest(method, url.pathname, 400, startTime);
+          return;
+        }
+
+        const isAllowed = await verifyRealPath(
+          resolved.rootPath,
+          resolved.resolvedPath,
+          resolved.pathModule
+        );
+        if (!isAllowed) {
+          sendError(res, 403, "Path outside allowlist");
+          logRequest(method, url.pathname, 403, startTime);
+          return;
+        }
+
+        const archiveName =
+          toArchivePath(resolved.pathModule.basename(resolved.resolvedPath)) ||
+          `file-${fallbackEntries.length + 1}`;
+        const archiveNameKey = isWindowsPath(resolved.rootPath)
+          ? archiveName.toLowerCase()
+          : archiveName;
+
+        if (archiveNames.has(archiveNameKey)) {
+          sendError(res, 400, "Selected files contain duplicate names");
+          logRequest(method, url.pathname, 400, startTime);
+          return;
+        }
+        archiveNames.add(archiveNameKey);
+
+        fallbackEntries.push({
+          sourcePath: resolved.resolvedPath,
+          archivePath: archiveName,
+          type: "file",
+        });
+        systemPaths.push(resolved.resolvedPath);
+      }
+
+      const startZip = await beginZipArchiveStream(res, {
+        zipFileName: buildZipFileName("selection"),
+        fallbackEntries,
+        systemInputPaths: systemPaths,
+        flattenWithSystemZip: true,
+      });
+
+      if (!startZip.ok) {
+        sendError(res, startZip.status, startZip.error);
+        logRequest(method, url.pathname, startZip.status, startTime);
+        return;
+      }
+
       logRequest(method, url.pathname, 200, startTime);
       return;
     }

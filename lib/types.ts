@@ -118,6 +118,11 @@ export type FileRootsResponse = {
   roots: FileRootInfo[];
 };
 
+export type FilesZipDownloadRequest = {
+  root: string;
+  paths: string[];
+};
+
 export type LogSourceInfo = {
   id: string;
   label: string;

@@ -195,6 +195,7 @@ export type TerminalOutputResponse = {
   cursor: number;
   chunks: TerminalOutputChunk[];
   cwd?: string;
+  sensitiveInputExpected?: boolean;
   closed: boolean;
   exitCode: number | null;
   closeReason: string | null;

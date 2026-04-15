@@ -17,6 +17,7 @@ import {
 } from "./terminal-session-accounting";
 import {
   buildTerminalFallbackAttempts,
+  deriveSensitiveInputExpectedFromOutput,
   inferFallbackCwdFromChunk,
   normalizeFallbackOutputChunk,
   shouldUseFallbackClientEcho,
@@ -264,6 +265,7 @@ type TerminalSession = {
   output: TerminalOutputChunk[];
   cursor: number;
   lastKnownCwd: string | null;
+  sensitiveInputExpected: boolean;
   createdAt: number;
   updatedAt: number;
   closedAt: number | null;
@@ -1141,6 +1143,10 @@ function updateTerminalActivity(session: TerminalSession) {
 
 function appendTerminalOutput(session: TerminalSession, data: string) {
   if (!data) return;
+  session.sensitiveInputExpected = deriveSensitiveInputExpectedFromOutput(
+    session.sensitiveInputExpected,
+    data
+  );
   if (session.mode === "fallback") {
     const inferredCwd = inferFallbackCwdFromChunk(data);
     if (inferredCwd) {
@@ -1225,6 +1231,7 @@ function createTerminalSession(colsRaw?: number, rowsRaw?: number) {
     output: [],
     cursor: 0,
     lastKnownCwd: null,
+    sensitiveInputExpected: false,
     createdAt: now,
     updatedAt: now,
     closedAt: null,
@@ -1950,6 +1957,7 @@ const server = http.createServer(async (req, res) => {
           session.mode === "fallback" && session.lastKnownCwd
             ? session.lastKnownCwd
             : undefined,
+        sensitiveInputExpected: session.sensitiveInputExpected,
         closed: session.closedAt !== null,
         exitCode: session.exitCode,
         closeReason: session.closeReason,

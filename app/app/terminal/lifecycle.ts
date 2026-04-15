@@ -46,6 +46,59 @@ export type FallbackCwdContext = {
 type TerminalState = "connecting" | "ready" | "running" | "closed" | "error";
 
 const FALLBACK_STARTUP_PROMPT_GRACE_POLLS = 2;
+const ANSI_CONTROL_SEQUENCE_PATTERN =
+  /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
+const SENSITIVE_INPUT_PROMPT_LINE_PATTERN =
+  /(?:^|\s)(?:\[sudo\]\s*)?(?:password|passphrase|enter\s+password|enter\s+passphrase|verification\s+code|otp)\b[^\r\n]*:\s*$/i;
+const SHELL_PROMPT_BOUNDARY_LINE_PATTERN = /[#$%>]\s*$/;
+
+function normalizeOutputLineForPromptMatching(line: string): string {
+  return line.replace(ANSI_CONTROL_SEQUENCE_PATTERN, "").trimEnd();
+}
+
+function splitOutputLines(outputChunk: string): string[] {
+  if (!outputChunk) return [];
+  return outputChunk.replace(/\r\n/g, "\n").split("\n");
+}
+
+function isLikelyShellPromptLine(line: string): boolean {
+  if (!line) return false;
+  if (!SHELL_PROMPT_BOUNDARY_LINE_PATTERN.test(line)) return false;
+  if (SENSITIVE_INPUT_PROMPT_LINE_PATTERN.test(line)) return false;
+  return true;
+}
+
+export function containsSensitiveInputPrompt(outputChunk: string): boolean {
+  for (const rawLine of splitOutputLines(outputChunk)) {
+    const line = normalizeOutputLineForPromptMatching(rawLine);
+    if (!line) continue;
+    if (SENSITIVE_INPUT_PROMPT_LINE_PATTERN.test(line)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function deriveSensitiveInputExpectedFromOutput(
+  current: boolean,
+  outputChunk: string
+): boolean {
+  let next = current;
+  for (const rawLine of splitOutputLines(outputChunk)) {
+    const line = normalizeOutputLineForPromptMatching(rawLine);
+    if (!line) continue;
+
+    if (SENSITIVE_INPUT_PROMPT_LINE_PATTERN.test(line)) {
+      next = true;
+      continue;
+    }
+
+    if (isLikelyShellPromptLine(line)) {
+      next = false;
+    }
+  }
+  return next;
+}
 
 export function canStartLifecycleAction(inFlight: boolean): boolean {
   return !inFlight;

@@ -9,6 +9,7 @@ import { fetchJson } from "@/lib/client";
 import {
   canResizeTerminalState,
   canStartLifecycleAction,
+  deriveSensitiveInputExpectedFromOutput,
   didFallbackCdCommandFail,
   normalizeBackendFallbackCwd,
   resolveFallbackCdPromptContext,
@@ -24,7 +25,11 @@ import {
   formatTerminalApiError,
   isTerminalSessionUnavailable,
 } from "./errors";
-import { prepareRunCommand } from "./command-format";
+import {
+  isSensitiveCommandForHistory,
+  prepareRunCommand,
+  sanitizeStoredCommandList,
+} from "./command-format";
 import type {
   TerminalCloseResponse,
   TerminalInputResponse,
@@ -37,6 +42,7 @@ const OUTPUT_POLL_MS = 350;
 const RECENT_LIMIT = 3;
 const RECENT_STORAGE_KEY = "terminal.recent";
 const FAVORITES_STORAGE_KEY = "terminal.favorites";
+const SENSITIVE_INPUT_TIMEOUT_MS = 120000;
 const FALLBACK_PROMPT_DEFAULT_USER = "operator";
 const FALLBACK_PROMPT_DEFAULT_HOST = "terminal";
 const FALLBACK_PROMPT_DEFAULT_DIR = "chitragupt";
@@ -172,6 +178,8 @@ export default function TerminalPage() {
   const fallbackShouldClientEchoRef = useRef(true);
   const fallbackStartupAwaitingPromptRef = useRef(false);
   const fallbackStartupEmptyPollsRef = useRef(0);
+  const sensitiveInputExpectedRef = useRef(false);
+  const sensitiveInputTimeoutRef = useRef<number | null>(null);
 
   const [terminalState, setTerminalState] = useState<TerminalState>("connecting");
   const terminalStateRef = useRef<TerminalState>("connecting");
@@ -184,14 +192,50 @@ export default function TerminalPage() {
     setTerminalState(nextState);
   }, []);
 
+  const clearSensitiveInputExpected = useCallback(() => {
+    sensitiveInputExpectedRef.current = false;
+    if (sensitiveInputTimeoutRef.current !== null) {
+      window.clearTimeout(sensitiveInputTimeoutRef.current);
+      sensitiveInputTimeoutRef.current = null;
+    }
+  }, []);
+
+  const setSensitiveInputExpected = useCallback((next: boolean) => {
+    sensitiveInputExpectedRef.current = next;
+
+    if (sensitiveInputTimeoutRef.current !== null) {
+      window.clearTimeout(sensitiveInputTimeoutRef.current);
+      sensitiveInputTimeoutRef.current = null;
+    }
+
+    if (next) {
+      sensitiveInputTimeoutRef.current = window.setTimeout(() => {
+        sensitiveInputExpectedRef.current = false;
+        sensitiveInputTimeoutRef.current = null;
+      }, SENSITIVE_INPUT_TIMEOUT_MS);
+    }
+  }, []);
+
   useEffect(() => {
-    setRecentCommands(readLocalList(RECENT_STORAGE_KEY).slice(0, RECENT_LIMIT));
-    setFavoriteCommands(readLocalList(FAVORITES_STORAGE_KEY));
+    const sanitizedRecent = sanitizeStoredCommandList(
+      readLocalList(RECENT_STORAGE_KEY)
+    ).slice(0, RECENT_LIMIT);
+    const sanitizedFavorites = sanitizeStoredCommandList(
+      readLocalList(FAVORITES_STORAGE_KEY)
+    );
+
+    setRecentCommands(sanitizedRecent);
+    setFavoriteCommands(sanitizedFavorites);
+    writeLocalList(RECENT_STORAGE_KEY, sanitizedRecent);
+    writeLocalList(FAVORITES_STORAGE_KEY, sanitizedFavorites);
   }, []);
 
   const addRecentCommand = useCallback((command: string) => {
     const trimmed = command.trim();
     if (!trimmed) return;
+    if (isSensitiveCommandForHistory(trimmed)) {
+      return;
+    }
     setRecentCommands((prev) => {
       const next = [trimmed, ...prev.filter((entry) => entry !== trimmed)].slice(
         0,
@@ -205,6 +249,16 @@ export default function TerminalPage() {
   const toggleFavoriteCommand = useCallback((command: string) => {
     const trimmed = command.trim();
     if (!trimmed) return;
+
+    if (isSensitiveCommandForHistory(trimmed)) {
+      setFavoriteCommands((prev) => {
+        const next = prev.filter((entry) => entry !== trimmed);
+        writeLocalList(FAVORITES_STORAGE_KEY, next);
+        return next;
+      });
+      return;
+    }
+
     setFavoriteCommands((prev) => {
       const exists = prev.includes(trimmed);
       const next = exists
@@ -246,8 +300,9 @@ export default function TerminalPage() {
     fallbackSawOutputWhileAwaitingRef.current = false;
     fallbackStartupAwaitingPromptRef.current = false;
     fallbackStartupEmptyPollsRef.current = 0;
+    clearSensitiveInputExpected();
     if (!mountedRef.current) return;
-  }, []);
+  }, [clearSensitiveInputExpected]);
 
   const finalizePendingFallbackPromptState = useCallback(() => {
     if (
@@ -421,6 +476,7 @@ export default function TerminalPage() {
     fallbackSawOutputWhileAwaitingRef.current = false;
     fallbackStartupAwaitingPromptRef.current = false;
     fallbackStartupEmptyPollsRef.current = 0;
+    clearSensitiveInputExpected();
     resizePendingRef.current = false;
     resizeInFlightRef.current = false;
     missingSessionErrorShownRef.current = false;
@@ -432,11 +488,18 @@ export default function TerminalPage() {
       body: JSON.stringify({ sessionId: activeSession }),
     });
     if (!mountedRef.current) return;
-  }, []);
+  }, [clearSensitiveInputExpected]);
 
   const handleDataForHistory = useCallback((data: string): string[] => {
     const completedCommands: string[] = [];
     for (const ch of data) {
+      if (sensitiveInputExpectedRef.current) {
+        if (ch === "\r" || ch === "\n") {
+          lineBufferRef.current = "";
+        }
+        continue;
+      }
+
       if (escapeSequenceRef.current) {
         const code = ch.charCodeAt(0);
         if (code >= 0x40 && code <= 0x7e) {
@@ -525,6 +588,10 @@ export default function TerminalPage() {
         }
 
         setError(null);
+        const backendSensitiveInputExpected = result.data.sensitiveInputExpected;
+        if (typeof backendSensitiveInputExpected === "boolean") {
+          setSensitiveInputExpected(backendSensitiveInputExpected);
+        }
         const backendFallbackCwd = normalizeBackendFallbackCwd(result.data.cwd);
         reconcileFallbackCwd(backendFallbackCwd ?? undefined);
         if (terminalModeRef.current === "fallback") {
@@ -574,6 +641,16 @@ export default function TerminalPage() {
             ) {
               return;
             }
+
+            if (typeof backendSensitiveInputExpected !== "boolean") {
+              setSensitiveInputExpected(
+                deriveSensitiveInputExpectedFromOutput(
+                  sensitiveInputExpectedRef.current,
+                  chunk.data
+                )
+              );
+            }
+
             if (terminalModeRef.current === "fallback") {
               if (fallbackAwaitingPromptRef.current && chunk.data.length > 0) {
                 fallbackSawOutputWhileAwaitingRef.current = true;
@@ -665,6 +742,7 @@ export default function TerminalPage() {
     markSessionUnavailable,
     notifyMissingSession,
     reconcileFallbackCwd,
+    setSensitiveInputExpected,
     setTerminalStateSafe,
     showFallbackPrompt,
     writeTerminalError,
@@ -680,6 +758,7 @@ export default function TerminalPage() {
     creatingSessionRef.current = true;
 
     try {
+      clearSensitiveInputExpected();
       setTerminalStateSafe("connecting");
       setError(null);
       term.clear();
@@ -743,7 +822,14 @@ export default function TerminalPage() {
     } finally {
       creatingSessionRef.current = false;
     }
-  }, [markSessionUnavailable, notifyMissingSession, setTerminalStateSafe, startPolling, writeTerminalError]);
+  }, [
+    clearSensitiveInputExpected,
+    markSessionUnavailable,
+    notifyMissingSession,
+    setTerminalStateSafe,
+    startPolling,
+    writeTerminalError,
+  ]);
 
   const runCommand = useCallback(async (command: string) => {
     const prepared = prepareRunCommand(command);
@@ -770,12 +856,18 @@ export default function TerminalPage() {
     }
     const term = terminalRef.current;
     if (!term) return;
+    const suppressPrintableEcho = sensitiveInputExpectedRef.current;
 
     for (const ch of input) {
       if (ch === "\n") {
         term.write("\r\n");
         continue;
       }
+
+      if (suppressPrintableEcho) {
+        continue;
+      }
+
       if (ch === "\u007f") {
         term.write("\b \b");
         continue;
@@ -799,18 +891,21 @@ export default function TerminalPage() {
       if (ch === "\n") {
         const buffered = fallbackLineBufferRef.current;
         const trimmed = buffered.trim();
-        if (trimmed) {
+        const shouldCaptureHistory = !sensitiveInputExpectedRef.current;
+        if (trimmed && shouldCaptureHistory) {
           addRecentCommand(trimmed);
         }
         localEchoFallbackInput("\n");
         fallbackLineBufferRef.current = "";
-        const inferredContext = resolveFallbackCdPromptContext(
-          {
-            cwd: fallbackPromptContextRef.current.cwd,
-            previousCwd: fallbackPromptContextRef.current.previousCwd,
-          },
-          buffered
-        );
+        const inferredContext = shouldCaptureHistory
+          ? resolveFallbackCdPromptContext(
+              {
+                cwd: fallbackPromptContextRef.current.cwd,
+                previousCwd: fallbackPromptContextRef.current.previousCwd,
+              },
+              buffered
+            )
+          : null;
         fallbackPendingPromptContextRef.current = inferredContext
           ? {
               ...fallbackPromptContextRef.current,
@@ -956,9 +1051,11 @@ export default function TerminalPage() {
       fallbackSawOutputWhileAwaitingRef.current = false;
       fallbackStartupAwaitingPromptRef.current = false;
       fallbackStartupEmptyPollsRef.current = 0;
+      clearSensitiveInputExpected();
       pollTimerRef.current = null;
     };
   }, [
+    clearSensitiveInputExpected,
     closeSession,
     createSession,
     handleDataForHistory,

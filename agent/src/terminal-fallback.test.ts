@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildTerminalFallbackAttempts,
+  containsSensitiveInputPrompt,
+  deriveSensitiveInputExpectedFromOutput,
   inferFallbackCwdFromChunk,
   normalizeFallbackOutputChunk,
   normalizeFallbackCwdCandidate,
@@ -91,4 +93,28 @@ test("inferFallbackCwdFromChunk handles ANSI/control sequences", () => {
   const chunk =
     "\x1b[32mpwd\x1b[0m\r\n\x1b[36m/Users/ajmsd\x1b[0m\r\n\x1b[33majmsd@host ajmsd $ \x1b[0m";
   assert.equal(inferFallbackCwdFromChunk(chunk), "/Users/ajmsd");
+});
+
+test("containsSensitiveInputPrompt detects password prompts", () => {
+  assert.equal(containsSensitiveInputPrompt("[sudo] password for operator: "), true);
+  assert.equal(containsSensitiveInputPrompt("Enter passphrase for key '/tmp/id_ed25519': "), true);
+});
+
+test("containsSensitiveInputPrompt ignores normal shell prompt lines", () => {
+  assert.equal(containsSensitiveInputPrompt("operator@host chitragupt $ "), false);
+});
+
+test("deriveSensitiveInputExpectedFromOutput enables sensitive mode when prompt appears", () => {
+  const next = deriveSensitiveInputExpectedFromOutput(false, "Password: ");
+  assert.equal(next, true);
+});
+
+test("deriveSensitiveInputExpectedFromOutput clears sensitive mode on shell prompt", () => {
+  const next = deriveSensitiveInputExpectedFromOutput(true, "operator@host chitragupt $ ");
+  assert.equal(next, false);
+});
+
+test("deriveSensitiveInputExpectedFromOutput preserves state for regular output", () => {
+  const next = deriveSensitiveInputExpectedFromOutput(true, "README.md\r\npackage.json\r\n");
+  assert.equal(next, true);
 });

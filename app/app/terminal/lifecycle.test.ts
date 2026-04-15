@@ -3,6 +3,8 @@ import test from "node:test";
 import {
   canResizeTerminalState,
   canStartLifecycleAction,
+  containsSensitiveInputPrompt,
+  deriveSensitiveInputExpectedFromOutput,
   didFallbackCdCommandFail,
   getReconnectCooldownRemainingMs,
   normalizeBackendFallbackCwd,
@@ -306,4 +308,38 @@ test("resolveFallbackCdPromptContext ignores non-standalone cd commands", () => 
   );
 
   assert.equal(next, null);
+});
+
+test("containsSensitiveInputPrompt detects sudo password prompts", () => {
+  const detected = containsSensitiveInputPrompt("[sudo] password for operator: ");
+  assert.equal(detected, true);
+});
+
+test("containsSensitiveInputPrompt ignores regular shell prompts", () => {
+  const detected = containsSensitiveInputPrompt("operator@host chitragupt $ ");
+  assert.equal(detected, false);
+});
+
+test("deriveSensitiveInputExpectedFromOutput enables sensitive mode on password prompt", () => {
+  const next = deriveSensitiveInputExpectedFromOutput(
+    false,
+    "Enter password: "
+  );
+  assert.equal(next, true);
+});
+
+test("deriveSensitiveInputExpectedFromOutput clears sensitive mode on shell prompt", () => {
+  const next = deriveSensitiveInputExpectedFromOutput(
+    true,
+    "operator@host chitragupt $ "
+  );
+  assert.equal(next, false);
+});
+
+test("deriveSensitiveInputExpectedFromOutput preserves existing state for normal output", () => {
+  const next = deriveSensitiveInputExpectedFromOutput(
+    true,
+    "README.md\r\npackage.json\r\n"
+  );
+  assert.equal(next, true);
 });

@@ -972,7 +972,7 @@ export default function TerminalPage() {
     favoriteCommands.length >= 4 ? "max-h-[300px]" : "max-h-96";
 
   return (
-    <section className="flex flex-col gap-6 lg:flex-1 lg:min-h-0 lg:overflow-hidden">
+    <section className="w-full flex flex-col gap-6 lg:flex-1 lg:min-h-0 lg:overflow-hidden">
       <div className="rounded-[28px] border border-orange-500/30 bg-[linear-gradient(155deg,rgba(18,12,8,0.92),rgba(8,5,4,0.9))] p-6 shadow-[0_0_35px_rgba(251,146,60,0.08)]">
         <h2 className="font-[var(--font-display)] text-2xl text-amber-100">
           Operator Terminal

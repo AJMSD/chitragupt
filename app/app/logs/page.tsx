@@ -116,7 +116,7 @@ export default function LogsPage() {
   );
 
   return (
-    <section className="space-y-6">
+    <section className="w-full space-y-6">
       <div className="rounded-[28px] border border-orange-500/20 bg-[#120c08]/80 p-6">
         <h2 className="font-[var(--font-display)] text-2xl text-amber-100">
           Log Stream

@@ -118,7 +118,7 @@ export default function PrivateDashboardPage() {
   }, [systemd]);
 
   return (
-    <section className="space-y-6">
+    <section className="w-full space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4 rounded-[28px] border border-orange-500/20 bg-[#120c08]/80 p-6">
         <div>
           <h2 className="font-[var(--font-display)] text-2xl text-amber-100">

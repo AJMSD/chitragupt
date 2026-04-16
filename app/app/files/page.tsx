@@ -1,20 +1,22 @@
 ﻿"use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
 import {
   IconDownload,
   IconFile,
   IconFolder,
   IconRefresh,
 } from "@/app/components/icons";
-import type {
-  FileEntry,
-  FileListResponse,
-  FileRootInfo,
-  FileRootsResponse,
-  FilesZipDownloadRequest,
-} from "@/lib/types";
+import type { FileListResponse, FilesZipDownloadRequest, FileRootsResponse } from "@/lib/types";
 import { fetchJson, formatApiError } from "@/lib/client";
+import {
+  createInitialState,
+  deriveBreadcrumbs,
+  filesReducer,
+  joinPath,
+  serializeLocationPath,
+  shouldAcceptListResponse,
+} from "./location-state";
 
 function formatBytes(bytes: number | null): string {
   if (!bytes && bytes !== 0) return "--";
@@ -31,11 +33,6 @@ function formatBytes(bytes: number | null): string {
 function formatModified(ms: number | null): string {
   if (!ms && ms !== 0) return "--";
   return new Date(ms).toLocaleString();
-}
-
-function joinPath(base: string, name: string): string {
-  if (!base) return name;
-  return `${base.replace(/\/$/, "")}/${name}`;
 }
 
 function extractDownloadFileName(contentDisposition: string | null): string | null {
@@ -68,135 +65,139 @@ async function readDownloadError(response: Response): Promise<string> {
 }
 
 export default function FilesPage() {
-  const [roots, setRoots] = useState<FileRootInfo[]>([]);
-  const [currentRoot, setCurrentRoot] = useState<string>("");
-  const [currentPath, setCurrentPath] = useState<string>("");
-  const [entries, setEntries] = useState<FileEntry[]>([]);
-  const [rootsError, setRootsError] = useState<string | null>(null);
-  const [entriesError, setEntriesError] = useState<string | null>(null);
-  const [loadingRoots, setLoadingRoots] = useState(true);
-  const [loadingEntries, setLoadingEntries] = useState(false);
-  const [multiSelectMode, setMultiSelectMode] = useState(false);
-  const [selectedFilePaths, setSelectedFilePaths] = useState<string[]>([]);
-  const [downloadingSelection, setDownloadingSelection] = useState(false);
+  const [state, dispatch] = useReducer(filesReducer, createInitialState());
+  const abortControllerRef = useRef<AbortController | null>(null);
 
-  const loadRoots = useCallback(async () => {
-    setLoadingRoots(true);
-    const result = await fetchJson<FileRootsResponse>(
-      "/api/private/files/roots"
-    );
-    if (result.ok) {
-      const nextRoots = result.data.roots ?? [];
-      setRoots(nextRoots);
-      setRootsError(null);
-      setCurrentRoot((prev) =>
-        prev && nextRoots.some((root) => root.id === prev) ? prev : ""
+  const activeRoot = useMemo(
+    () => state.roots.find((root) => root.id === state.location.root) ?? null,
+    [state.roots, state.location.root]
+  );
+
+  // Load roots on mount
+  useEffect(() => {
+    const loadRoots = async () => {
+      dispatch({ type: "REQUEST_ROOTS" });
+      const result = await fetchJson<FileRootsResponse>(
+        "/api/private/files/roots"
       );
-      setCurrentPath("");
-      setSelectedFilePaths([]);
-      setMultiSelectMode(false);
-    } else {
-      setRootsError(formatApiError(result.error));
-    }
-    setLoadingRoots(false);
+      if (result.ok) {
+        dispatch({
+          type: "ROOTS_LOADED",
+          roots: result.data.roots ?? [],
+        });
+      } else {
+        dispatch({
+          type: "ROOTS_FAILED",
+          error: formatApiError(result.error),
+        });
+      }
+    };
+
+    void loadRoots();
   }, []);
 
-  const loadEntries = useCallback(async (rootId: string, path: string) => {
-    setLoadingEntries(true);
-    const params = new URLSearchParams({ root: rootId });
+  // Load entries when location changes
+  useEffect(() => {
+    if (!state.location.root) return;
+
+    // Abort prior request if any
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
+    const ac = new AbortController();
+    abortControllerRef.current = ac;
+
+    const loadEntries = async () => {
+      const params = new URLSearchParams({
+        root: state.location.root,
+      });
+      const path = serializeLocationPath(state.location);
+      if (path) {
+        params.set("path", path);
+      }
+
+      const result = await fetchJson<FileListResponse>(
+        `/api/private/files/list?${params.toString()}`,
+        { signal: ac.signal }
+      );
+
+      // Check if request was aborted
+      if (ac.signal.aborted) return;
+
+      if (result.ok) {
+        // **Stale response protection**: only accept if requestId matches pending
+        if (
+          shouldAcceptListResponse(
+            result.data,
+            state.pendingLocation,
+            state.location
+          )
+        ) {
+          dispatch({
+            type: "ENTRIES_LOADED",
+            data: result.data,
+            requestId: state.location.requestId,
+          });
+        }
+      } else {
+        dispatch({
+          type: "ENTRIES_FAILED",
+          error: formatApiError(result.error),
+        });
+      }
+    };
+
+    void loadEntries();
+
+    return () => ac.abort();
+  }, [state.location, state.pendingLocation]);
+
+  const breadcrumbs = useMemo(() => {
+    return deriveBreadcrumbs(
+      state.location,
+      activeRoot?.label,
+      (segments) => {
+        dispatch({
+          type: "NAVIGATE_TO_SEGMENTS",
+          segments,
+        });
+      }
+    );
+  }, [state.location, activeRoot?.label]);
+
+  const folderZipUrl = useMemo(() => {
+    if (!state.location.root) return null;
+    const params = new URLSearchParams({ root: state.location.root });
+    const path = serializeLocationPath(state.location);
     if (path) {
       params.set("path", path);
     }
-    const result = await fetchJson<FileListResponse>(
-      `/api/private/files/list?${params.toString()}`
-    );
-    if (result.ok) {
-      setEntries(result.data.entries ?? []);
-      setEntriesError(null);
-    } else {
-      setEntriesError(formatApiError(result.error));
-      setEntries([]);
-    }
-    setLoadingEntries(false);
-  }, []);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial data load
-    void loadRoots();
-  }, [loadRoots]);
-
-  useEffect(() => {
-    if (!currentRoot) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- sync entries on navigation
-    void loadEntries(currentRoot, currentPath);
-  }, [currentRoot, currentPath, loadEntries]);
-
-  const activeRoot = useMemo(
-    () => roots.find((root) => root.id === currentRoot) ?? null,
-    [roots, currentRoot]
-  );
-
-  const breadcrumbs = useMemo(() => {
-    const segments = currentPath.split("/").filter(Boolean);
-    const items = [{ label: activeRoot?.label ?? "Root", path: "" }];
-    segments.forEach((segment, index) => {
-      const nextPath = segments.slice(0, index + 1).join("/");
-      items.push({ label: segment, path: nextPath });
-    });
-    return items;
-  }, [currentPath, activeRoot]);
-
-  const folderZipUrl = useMemo(() => {
-    if (!currentRoot) return null;
-    const params = new URLSearchParams({ root: currentRoot });
-    if (currentPath) {
-      params.set("path", currentPath);
-    }
     return `/api/private/files/zip?${params.toString()}`;
-  }, [currentRoot, currentPath]);
+  }, [state.location]);
 
-  const selectedFileSet = useMemo(() => new Set(selectedFilePaths), [selectedFilePaths]);
-  const selectedCount = selectedFilePaths.length;
-
-  const toggleSelectedFile = useCallback((filePath: string) => {
-    setSelectedFilePaths((prev) =>
-      prev.includes(filePath)
-        ? prev.filter((path) => path !== filePath)
-        : [...prev, filePath]
-    );
-  }, []);
-
-  const clearSelectedFiles = useCallback(() => {
-    setSelectedFilePaths([]);
-  }, []);
-
-  const navigateToPath = useCallback((nextPath: string) => {
-    setCurrentPath(nextPath);
-    setSelectedFilePaths([]);
-  }, []);
-
-  const toggleMultiSelect = useCallback(() => {
-    setMultiSelectMode((prev) => {
-      if (prev) {
-        setSelectedFilePaths([]);
-      }
-      return !prev;
-    });
-  }, []);
+  const selectedFileSet = useMemo(
+    () => new Set(state.selectedFilePaths),
+    [state.selectedFilePaths]
+  );
+  const selectedCount = state.selectedFilePaths.length;
 
   const downloadSelectedFilesZip = useCallback(async () => {
-    if (!currentRoot || selectedFilePaths.length === 0 || downloadingSelection) {
+    if (
+      !state.location.root ||
+      state.selectedFilePaths.length === 0 ||
+      state.downloadingSelection
+    ) {
       return;
     }
 
-    setDownloadingSelection(true);
-    setEntriesError(null);
+    dispatch({ type: "SET_DOWNLOADING_SELECTION", downloading: true });
 
     let response: Response;
     try {
       const payload: FilesZipDownloadRequest = {
-        root: currentRoot,
-        paths: selectedFilePaths,
+        root: state.location.root,
+        paths: state.selectedFilePaths as string[],
       };
       response = await fetch("/api/private/files/zip", {
         method: "POST",
@@ -207,20 +208,24 @@ export default function FilesPage() {
         body: JSON.stringify(payload),
       });
     } catch {
-      setEntriesError("Ops agent unavailable or returned an error.");
-      setDownloadingSelection(false);
+      dispatch({
+        type: "ENTRIES_FAILED",
+        error: "Ops agent unavailable or returned an error.",
+      });
+      dispatch({ type: "SET_DOWNLOADING_SELECTION", downloading: false });
       return;
     }
 
     if (!response.ok) {
       const message = await readDownloadError(response);
-      setEntriesError(
-        formatApiError({
+      dispatch({
+        type: "ENTRIES_FAILED",
+        error: formatApiError({
           status: response.status,
           message,
-        })
-      );
-      setDownloadingSelection(false);
+        }),
+      });
+      dispatch({ type: "SET_DOWNLOADING_SELECTION", downloading: false });
       return;
     }
 
@@ -239,11 +244,11 @@ export default function FilesPage() {
     anchor.remove();
     URL.revokeObjectURL(objectUrl);
 
-    setDownloadingSelection(false);
-    setSelectedFilePaths([]);
-  }, [currentRoot, downloadingSelection, selectedFilePaths]);
+    dispatch({ type: "SET_DOWNLOADING_SELECTION", downloading: false });
+    dispatch({ type: "CLEAR_SELECTED_FILES" });
+  }, [state.location.root, state.selectedFilePaths, state.downloadingSelection]);
 
-  const showRoots = !currentRoot;
+  const showRoots = !state.location.root;
 
   return (
     <section className="w-full space-y-6">
@@ -263,27 +268,24 @@ export default function FilesPage() {
           <div className="mt-2 text-xs text-amber-100/70">
             Select a root to open the vault.
           </div>
-          {rootsError ? (
+          {state.rootsError ? (
             <div className="mt-3 rounded-2xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
-              {rootsError}
+              {state.rootsError}
             </div>
-          ) : loadingRoots ? (
+          ) : state.loadingRoots ? (
             <div className="mt-3 text-sm text-amber-100/70">Loading roots...</div>
-          ) : roots.length === 0 ? (
+          ) : state.roots.length === 0 ? (
             <div className="mt-3 text-sm text-amber-100/70">
               No allowlisted roots configured.
             </div>
           ) : (
             <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {roots.map((root) => (
+              {state.roots.map((root) => (
                 <button
                   key={root.id}
                   type="button"
                   onClick={() => {
-                    setCurrentRoot(root.id);
-                    setCurrentPath("");
-                    setSelectedFilePaths([]);
-                    setMultiSelectMode(false);
+                    dispatch({ type: "SELECT_ROOT", rootId: root.id });
                   }}
                   className="flex items-center gap-4 rounded-[20px] border border-orange-500/20 bg-black/40 px-4 py-4 text-left transition hover:border-orange-400/60 hover:bg-orange-400/10"
                 >
@@ -313,12 +315,12 @@ export default function FilesPage() {
               <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-amber-100/80">
                 {breadcrumbs.map((crumb, index) => (
                   <button
-                    key={crumb.path}
+                    key={`${crumb.label}-${index}`}
                     type="button"
-                    onClick={() => navigateToPath(crumb.path)}
+                    onClick={crumb.onClick}
                     className="rounded-full border border-orange-500/20 px-3 py-1 text-[10px] uppercase tracking-[0.3em] text-amber-100/70 transition hover:border-orange-400/60 hover:text-amber-100"
                   >
-                    {index === 0 ? "Home" : crumb.label}
+                    {crumb.label}
                   </button>
                 ))}
               </div>
@@ -328,12 +330,7 @@ export default function FilesPage() {
                 className="flex items-center gap-2 rounded-full border border-orange-400/40 bg-orange-400/10 px-4 py-2 text-[10px] uppercase tracking-[0.3em] text-orange-100 transition hover:border-orange-300 hover:bg-orange-400/20"
                 type="button"
                 onClick={() => {
-                  setCurrentRoot("");
-                  setCurrentPath("");
-                  setEntries([]);
-                  setEntriesError(null);
-                  setSelectedFilePaths([]);
-                  setMultiSelectMode(false);
+                  dispatch({ type: "BACK_TO_ROOTS" });
                 }}
               >
                 Back to roots
@@ -355,12 +352,14 @@ export default function FilesPage() {
               <button
                 className="flex items-center gap-2 rounded-full border border-orange-400/40 bg-orange-400/10 px-4 py-2 text-[10px] uppercase tracking-[0.3em] text-orange-100 transition hover:border-orange-300 hover:bg-orange-400/20"
                 type="button"
-                onClick={toggleMultiSelect}
-                aria-pressed={multiSelectMode}
+                onClick={() => {
+                  dispatch({ type: "TOGGLE_MULTISELECT" });
+                }}
+                aria-pressed={state.multiSelectMode}
               >
-                {multiSelectMode ? "Exit select" : "Select files"}
+                {state.multiSelectMode ? "Exit select" : "Select files"}
               </button>
-              {multiSelectMode ? (
+              {state.multiSelectMode ? (
                 <>
                   <button
                     className="flex items-center gap-2 rounded-full border border-orange-400/40 bg-orange-400/10 px-4 py-2 text-[10px] uppercase tracking-[0.3em] text-orange-100 transition hover:border-orange-300 hover:bg-orange-400/20 disabled:cursor-not-allowed disabled:opacity-60"
@@ -368,17 +367,19 @@ export default function FilesPage() {
                     onClick={() => {
                       void downloadSelectedFilesZip();
                     }}
-                    disabled={selectedCount === 0 || downloadingSelection}
+                    disabled={selectedCount === 0 || state.downloadingSelection}
                   >
-                    {downloadingSelection
+                    {state.downloadingSelection
                       ? "Preparing zip"
                       : `Download selected (${selectedCount})`}
                   </button>
                   <button
                     className="flex items-center gap-2 rounded-full border border-orange-400/40 bg-orange-400/10 px-4 py-2 text-[10px] uppercase tracking-[0.3em] text-orange-100 transition hover:border-orange-300 hover:bg-orange-400/20 disabled:cursor-not-allowed disabled:opacity-60"
                     type="button"
-                    onClick={clearSelectedFiles}
-                    disabled={selectedCount === 0 || downloadingSelection}
+                    onClick={() => {
+                      dispatch({ type: "CLEAR_SELECTED_FILES" });
+                    }}
+                    disabled={selectedCount === 0 || state.downloadingSelection}
                   >
                     Clear
                   </button>
@@ -388,11 +389,14 @@ export default function FilesPage() {
                 className="flex h-11 w-11 items-center justify-center rounded-full border border-orange-400/40 bg-orange-400/10 text-orange-100 transition hover:border-orange-300 hover:bg-orange-400/20"
                 type="button"
                 onClick={() => {
-                  if (currentRoot) {
-                    void loadEntries(currentRoot, currentPath);
+                  if (state.location.root) {
+                    dispatch({
+                      type: "NAVIGATE_TO_SEGMENTS",
+                      segments: state.location.segments,
+                    });
                   }
                 }}
-                disabled={!currentRoot || loadingEntries}
+                disabled={!state.location.root || state.loadingEntries}
                 aria-label="Refresh file listing"
                 title="Refresh file listing"
               >
@@ -401,22 +405,27 @@ export default function FilesPage() {
             </div>
           </div>
 
-          {entriesError ? (
+          {state.entriesError ? (
             <div className="mt-4 rounded-2xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
-              {entriesError}
+              {state.entriesError}
             </div>
-          ) : loadingEntries ? (
+          ) : state.loadingEntries ? (
             <div className="mt-4 text-sm text-amber-100/70">Loading entries...</div>
-          ) : entries.length === 0 ? (
+          ) : state.entries.length === 0 ? (
             <div className="mt-4 text-sm text-amber-100/70">
-              {currentRoot ? "No files found in this folder." : "Select a root to browse."}
+              {state.location.root
+                ? "No files found in this folder."
+                : "Select a root to browse."}
             </div>
           ) : (
             <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {entries.map((entry) => {
-                const entryPath = joinPath(currentPath, entry.name);
+              {state.entries.map((entry) => {
+                const entryPath = joinPath(
+                  serializeLocationPath(state.location),
+                  entry.name
+                );
                 const downloadParams = new URLSearchParams({
-                  root: currentRoot,
+                  root: state.location.root,
                   path: entryPath,
                 });
                 const downloadUrl = `/api/private/files/download?${downloadParams.toString()}`;
@@ -428,7 +437,7 @@ export default function FilesPage() {
                   <div
                     key={`${entry.type}-${entry.name}`}
                     className={`group relative rounded-[20px] border bg-black/40 p-4 transition hover:border-orange-400/60 ${
-                      multiSelectMode && isFile && isSelected
+                      state.multiSelectMode && isFile && isSelected
                         ? "border-orange-300/80 bg-orange-400/10"
                         : "border-orange-500/20"
                     }`}
@@ -452,7 +461,7 @@ export default function FilesPage() {
                         </div>
                       </div>
 
-                      {multiSelectMode && isFile ? (
+                      {state.multiSelectMode && isFile ? (
                         <button
                           className={`rounded-full border px-3 py-1 text-[10px] uppercase tracking-[0.3em] transition ${
                             isSelected
@@ -460,7 +469,12 @@ export default function FilesPage() {
                               : "border-orange-500/30 text-amber-100/80 hover:border-orange-300/60"
                           }`}
                           type="button"
-                          onClick={() => toggleSelectedFile(entryPath)}
+                          onClick={() => {
+                            dispatch({
+                              type: "TOGGLE_SELECTED_FILE",
+                              filePath: entryPath,
+                            });
+                          }}
                           aria-pressed={isSelected}
                           title={isSelected ? "Deselect file" : "Select file"}
                         >
@@ -469,7 +483,8 @@ export default function FilesPage() {
                       ) : null}
                     </div>
                     <div className="mt-3 text-xs text-amber-100/60">
-                      {formatBytes(entry.sizeBytes)} | {formatModified(entry.modifiedMs)}
+                      {formatBytes(entry.sizeBytes)} |{" "}
+                      {formatModified(entry.modifiedMs)}
                     </div>
 
                     <div className="absolute inset-0 flex items-center justify-center rounded-[20px] bg-black/70 opacity-0 transition group-hover:opacity-100">
@@ -477,14 +492,21 @@ export default function FilesPage() {
                         <button
                           className="flex h-12 w-12 items-center justify-center rounded-full border border-orange-400/50 bg-orange-400/10 text-orange-100"
                           type="button"
-                          onClick={() => navigateToPath(entryPath)}
+                          onClick={() => {
+                            dispatch({
+                              type: "NAVIGATE_TO_SEGMENTS",
+                              segments: entryPath
+                                .split("/")
+                                .filter((s) => s.length > 0),
+                            });
+                          }}
                           aria-label="Open folder"
                           title="Open folder"
                         >
                           <IconFolder className="h-5 w-5" />
                         </button>
                       ) : isFile ? (
-                        multiSelectMode ? (
+                        state.multiSelectMode ? (
                           <span className="text-xs uppercase tracking-[0.3em] text-amber-200/70">
                             Selection mode
                           </span>

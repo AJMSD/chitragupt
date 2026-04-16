@@ -9,7 +9,7 @@
         "build": "next build",
         "start": "next start",
         "lint": "eslint",
-        "test:terminal": "tsx --test agent/src/terminal-session-accounting.test.ts agent/src/terminal-fallback.test.ts app/app/terminal/lifecycle.test.ts app/app/terminal/errors.test.ts app/app/terminal/command-format.test.ts",
+        "test:terminal": "tsx --test agent/src/terminal-session-accounting.test.ts agent/src/terminal-fallback.test.ts app/app/terminal/lifecycle.test.ts app/app/terminal/errors.test.ts app/app/terminal/command-format.test.ts app/app/files/files.test.ts",
         "test:e2e": "playwright test",
         "test:e2e:headed": "playwright test --headed",
         "agent:build": "tsc -p agent/tsconfig.json",
